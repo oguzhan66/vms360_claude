@@ -1,0 +1,17 @@
+[Unit]
+Description=VMS360 Retail Panel - Frontend (Production Build with Nginx)
+After=network.target vms360-backend.service
+Wants=vms360-backend.service
+
+[Service]
+Type=forking
+PIDFile=/run/nginx-vms360.pid
+ExecStartPre=/usr/sbin/nginx -t -c /opt/vms360/nginx/vms360.conf
+ExecStart=/usr/sbin/nginx -c /opt/vms360/nginx/vms360.conf
+ExecReload=/bin/kill -s HUP $MAINPID
+ExecStop=/bin/kill -s QUIT $MAINPID
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,888 @@
+{
+  "report_type": "advanced_analytics",
+  "tab": "overview",
+  "period": "week",
+  "filters": {
+    "region": "Tümü",
+    "city": "Tümü",
+    "store": "Tümü",
+    "date_from": "2026-02-12",
+    "date_to": "2026-02-19"
+  },
+  "data": {
+    "summary": {
+      "generated_at": "2026-02-19T19:28:44.348317+00:00",
+      "store_id": null,
+      "quick_stats": {
+        "total_stores": 2,
+        "total_cameras": 71,
+        "today_visitors": 2427,
+        "visitor_change_percent": 1.7,
+        "avg_occupancy": 60.9,
+        "avg_wait_time_min": 2.9
+      },
+      "alerts": {
+        "high_occupancy_stores": 2,
+        "long_queue_stores": 1,
+        "cameras_offline": 1
+      },
+      "top_performers": {
+        "highest_traffic": "Forum Kadıköy",
+        "best_conversion": "Forum Kadıköy",
+        "shortest_wait": "Forum Kadıköy"
+      }
+    },
+    "hourly_traffic": {
+      "date": "2026-02-19",
+      "store_id": null,
+      "hourly_data": [
+        {
+          "hour": 0,
+          "hour_label": "00:00",
+          "in_count": 0,
+          "out_count": 0,
+          "current_visitors": 0
+        },
+        {
+          "hour": 1,
+          "hour_label": "01:00",
+          "in_count": 0,
+          "out_count": 0,
+          "current_visitors": 0
+        },
+        {
+          "hour": 2,
+          "hour_label": "02:00",
+          "in_count": 0,
+          "out_count": 0,
+          "current_visitors": 0
+        },
+        {
+          "hour": 3,
+          "hour_label": "03:00",
+          "in_count": 0,
+          "out_count": 0,
+          "current_visitors": 0
+        },
+        {
+          "hour": 4,
+          "hour_label": "04:00",
+          "in_count": 0,
+          "out_count": 0,
+          "current_visitors": 0
+        },
+        {
+          "hour": 5,
+          "hour_label": "05:00",
+          "in_count": 0,
+          "out_count": 0,
+          "current_visitors": 0
+        },
+        {
+          "hour": 6,
+          "hour_label": "06:00",
+          "in_count": 0,
+          "out_count": 0,
+          "current_visitors": 0
+        },
+        {
+          "hour": 7,
+          "hour_label": "07:00",
+          "in_count": 0,
+          "out_count": 0,
+          "current_visitors": 0
+        },
+        {
+          "hour": 8,
+          "hour_label": "08:00",
+          "in_count": 0,
+          "out_count": 0,
+          "current_visitors": 0
+        },
+        {
+          "hour": 9,
+          "hour_label": "09:00",
+          "in_count": 0,
+          "out_count": 0,
+          "current_visitors": 0
+        },
+        {
+          "hour": 10,
+          "hour_label": "10:00",
+          "in_count": 0,
+          "out_count": 0,
+          "current_visitors": 0
+        },
+        {
+          "hour": 11,
+          "hour_label": "11:00",
+          "in_count": 0,
+          "out_count": 0,
+          "current_visitors": 0
+        },
+        {
+          "hour": 12,
+          "hour_label": "12:00",
+          "in_count": 1537,
+          "out_count": 1928,
+          "current_visitors": 0
+        },
+        {
+          "hour": 13,
+          "hour_label": "13:00",
+          "in_count": 1662,
+          "out_count": 2077,
+          "current_visitors": 0
+        },
+        {
+          "hour": 14,
+          "hour_label": "14:00",
+          "in_count": 1856,
+          "out_count": 2311,
+          "current_visitors": 0
+        },
+        {
+          "hour": 15,
+          "hour_label": "15:00",
+          "in_count": 0,
+          "out_count": 0,
+          "current_visitors": 0
+        },
+        {
+          "hour": 16,
+          "hour_label": "16:00",
+          "in_count": 0,
+          "out_count": 0,
+          "current_visitors": 0
+        },
+        {
+          "hour": 17,
+          "hour_label": "17:00",
+          "in_count": 0,
+          "out_count": 0,
+          "current_visitors": 0
+        },
+        {
+          "hour": 18,
+          "hour_label": "18:00",
+          "in_count": 0,
+          "out_count": 0,
+          "current_visitors": 0
+        },
+        {
+          "hour": 19,
+          "hour_label": "19:00",
+          "in_count": 0,
+          "out_count": 0,
+          "current_visitors": 0
+        },
+        {
+          "hour": 20,
+          "hour_label": "20:00",
+          "in_count": 0,
+          "out_count": 0,
+          "current_visitors": 0
+        },
+        {
+          "hour": 21,
+          "hour_label": "21:00",
+          "in_count": 0,
+          "out_count": 0,
+          "current_visitors": 0
+        },
+        {
+          "hour": 22,
+          "hour_label": "22:00",
+          "in_count": 0,
+          "out_count": 0,
+          "current_visitors": 0
+        },
+        {
+          "hour": 23,
+          "hour_label": "23:00",
+          "in_count": 0,
+          "out_count": 0,
+          "current_visitors": 0
+        }
+      ],
+      "peak_hour": "14:00",
+      "peak_visitors": 1856,
+      "total_in": 5055,
+      "total_out": 6316,
+      "average_hourly": 210.6
+    },
+    "trends": {
+      "period": "week",
+      "store_id": null,
+      "daily_data": [
+        {
+          "date": "2026-02-13",
+          "day_name": "Friday",
+          "in_count": 642,
+          "out_count": 609,
+          "net_visitors": 33
+        },
+        {
+          "date": "2026-02-14",
+          "day_name": "Saturday",
+          "in_count": 1082,
+          "out_count": 1027,
+          "net_visitors": 55
+        },
+        {
+          "date": "2026-02-15",
+          "day_name": "Sunday",
+          "in_count": 1473,
+          "out_count": 1399,
+          "net_visitors": 74
+        },
+        {
+          "date": "2026-02-16",
+          "day_name": "Monday",
+          "in_count": 523,
+          "out_count": 496,
+          "net_visitors": 27
+        },
+        {
+          "date": "2026-02-17",
+          "day_name": "Tuesday",
+          "in_count": 608,
+          "out_count": 577,
+          "net_visitors": 31
+        },
+        {
+          "date": "2026-02-18",
+          "day_name": "Wednesday",
+          "in_count": 600,
+          "out_count": 570,
+          "net_visitors": 30
+        },
+        {
+          "date": "2026-02-19",
+          "day_name": "Thursday",
+          "in_count": 5055,
+          "out_count": 6316,
+          "net_visitors": -1261
+        }
+      ],
+      "total_visitors": 9983,
+      "average_daily": 1426.1,
+      "best_day": {
+        "date": "2026-02-19",
+        "visitors": 5055
+      },
+      "worst_day": {
+        "date": "2026-02-16",
+        "visitors": 523
+      },
+      "week_over_week_change": 0
+    },
+    "demographics": {
+      "store_id": null,
+      "period": "day",
+      "overall": {
+        "male_percent": 47.6,
+        "female_percent": 52.4,
+        "primary_gender": "Kadın",
+        "primary_age_group": "25-34",
+        "secondary_age_group": "18-24"
+      },
+      "hourly_breakdown": [
+        {
+          "hour": 0,
+          "hour_label": "00:00",
+          "male_percent": 51,
+          "female_percent": 49,
+          "age_distribution": {
+            "0-17": 3,
+            "18-24": 23,
+            "25-34": 27,
+            "35-44": 17,
+            "45-54": 13,
+            "55+": 7
+          }
+        },
+        {
+          "hour": 1,
+          "hour_label": "01:00",
+          "male_percent": 55,
+          "female_percent": 50,
+          "age_distribution": {
+            "0-17": 8,
+            "18-24": 26,
+            "25-34": 28,
+            "35-44": 23,
+            "45-54": 13,
+            "55+": 8
+          }
+        },
+        {
+          "hour": 2,
+          "hour_label": "02:00",
+          "male_percent": 51,
+          "female_percent": 52,
+          "age_distribution": {
+            "0-17": 3,
+            "18-24": 23,
+            "25-34": 25,
+            "35-44": 18,
+            "45-54": 17,
+            "55+": 13
+          }
+        },
+        {
+          "hour": 3,
+          "hour_label": "03:00",
+          "male_percent": 55,
+          "female_percent": 46,
+          "age_distribution": {
+            "0-17": 8,
+            "18-24": 22,
+            "25-34": 26,
+            "35-44": 21,
+            "45-54": 16,
+            "55+": 9
+          }
+        },
+        {
+          "hour": 4,
+          "hour_label": "04:00",
+          "male_percent": 54,
+          "female_percent": 50,
+          "age_distribution": {
+            "0-17": 6,
+            "18-24": 25,
+            "25-34": 24,
+            "35-44": 18,
+            "45-54": 18,
+            "55+": 10
+          }
+        },
+        {
+          "hour": 5,
+          "hour_label": "05:00",
+          "male_percent": 52,
+          "female_percent": 49,
+          "age_distribution": {
+            "0-17": 7,
+            "18-24": 24,
+            "25-34": 23,
+            "35-44": 20,
+            "45-54": 17,
+            "55+": 10
+          }
+        },
+        {
+          "hour": 6,
+          "hour_label": "06:00",
+          "male_percent": 51,
+          "female_percent": 47,
+          "age_distribution": {
+            "0-17": 8,
+            "18-24": 23,
+            "25-34": 25,
+            "35-44": 23,
+            "45-54": 13,
+            "55+": 9
+          }
+        },
+        {
+          "hour": 7,
+          "hour_label": "07:00",
+          "male_percent": 52,
+          "female_percent": 47,
+          "age_distribution": {
+            "0-17": 6,
+            "18-24": 28,
+            "25-34": 26,
+            "35-44": 17,
+            "45-54": 14,
+            "55+": 12
+          }
+        },
+        {
+          "hour": 8,
+          "hour_label": "08:00",
+          "male_percent": 50,
+          "female_percent": 55,
+          "age_distribution": {
+            "0-17": 6,
+            "18-24": 17,
+            "25-34": 23,
+            "35-44": 27,
+            "45-54": 21,
+            "55+": 12
+          }
+        },
+        {
+          "hour": 9,
+          "hour_label": "09:00",
+          "male_percent": 45,
+          "female_percent": 52,
+          "age_distribution": {
+            "0-17": 8,
+            "18-24": 13,
+            "25-34": 19,
+            "35-44": 27,
+            "45-54": 21,
+            "55+": 18
+          }
+        },
+        {
+          "hour": 10,
+          "hour_label": "10:00",
+          "male_percent": 44,
+          "female_percent": 58,
+          "age_distribution": {
+            "0-17": 6,
+            "18-24": 16,
+            "25-34": 23,
+            "35-44": 22,
+            "45-54": 23,
+            "55+": 14
+          }
+        },
+        {
+          "hour": 11,
+          "hour_label": "11:00",
+          "male_percent": 40,
+          "female_percent": 53,
+          "age_distribution": {
+            "0-17": 7,
+            "18-24": 13,
+            "25-34": 22,
+            "35-44": 28,
+            "45-54": 21,
+            "55+": 13
+          }
+        },
+        {
+          "hour": 12,
+          "hour_label": "12:00",
+          "male_percent": 40,
+          "female_percent": 59,
+          "age_distribution": {
+            "0-17": 17,
+            "18-24": 19,
+            "25-34": 23,
+            "35-44": 21,
+            "45-54": 13,
+            "55+": 11
+          }
+        },
+        {
+          "hour": 13,
+          "hour_label": "13:00",
+          "male_percent": 41,
+          "female_percent": 61,
+          "age_distribution": {
+            "0-17": 17,
+            "18-24": 20,
+            "25-34": 23,
+            "35-44": 21,
+            "45-54": 9,
+            "55+": 11
+          }
+        },
+        {
+          "hour": 14,
+          "hour_label": "14:00",
+          "male_percent": 43,
+          "female_percent": 61,
+          "age_distribution": {
+            "0-17": 18,
+            "18-24": 21,
+            "25-34": 24,
+            "35-44": 17,
+            "45-54": 15,
+            "55+": 10
+          }
+        },
+        {
+          "hour": 15,
+          "hour_label": "15:00",
+          "male_percent": 38,
+          "female_percent": 65,
+          "age_distribution": {
+            "0-17": 13,
+            "18-24": 17,
+            "25-34": 25,
+            "35-44": 23,
+            "45-54": 12,
+            "55+": 11
+          }
+        },
+        {
+          "hour": 16,
+          "hour_label": "16:00",
+          "male_percent": 44,
+          "female_percent": 63,
+          "age_distribution": {
+            "0-17": 12,
+            "18-24": 22,
+            "25-34": 24,
+            "35-44": 23,
+            "45-54": 15,
+            "55+": 10
+          }
+        },
+        {
+          "hour": 17,
+          "hour_label": "17:00",
+          "male_percent": 49,
+          "female_percent": 55,
+          "age_distribution": {
+            "0-17": 9,
+            "18-24": 28,
+            "25-34": 30,
+            "35-44": 13,
+            "45-54": 7,
+            "55+": 5
+          }
+        },
+        {
+          "hour": 18,
+          "hour_label": "18:00",
+          "male_percent": 43,
+          "female_percent": 48,
+          "age_distribution": {
+            "0-17": 10,
+            "18-24": 27,
+            "25-34": 28,
+            "35-44": 13,
+            "45-54": 13,
+            "55+": 4
+          }
+        },
+        {
+          "hour": 19,
+          "hour_label": "19:00",
+          "male_percent": 44,
+          "female_percent": 51,
+          "age_distribution": {
+            "0-17": 13,
+            "18-24": 30,
+            "25-34": 31,
+            "35-44": 15,
+            "45-54": 10,
+            "55+": 8
+          }
+        },
+        {
+          "hour": 20,
+          "hour_label": "20:00",
+          "male_percent": 44,
+          "female_percent": 52,
+          "age_distribution": {
+            "0-17": 8,
+            "18-24": 28,
+            "25-34": 28,
+            "35-44": 14,
+            "45-54": 11,
+            "55+": 4
+          }
+        },
+        {
+          "hour": 21,
+          "hour_label": "21:00",
+          "male_percent": 51,
+          "female_percent": 54,
+          "age_distribution": {
+            "0-17": 10,
+            "18-24": 28,
+            "25-34": 27,
+            "35-44": 15,
+            "45-54": 7,
+            "55+": 7
+          }
+        },
+        {
+          "hour": 22,
+          "hour_label": "22:00",
+          "male_percent": 54,
+          "female_percent": 45,
+          "age_distribution": {
+            "0-17": 8,
+            "18-24": 25,
+            "25-34": 25,
+            "35-44": 18,
+            "45-54": 15,
+            "55+": 8
+          }
+        },
+        {
+          "hour": 23,
+          "hour_label": "23:00",
+          "male_percent": 51,
+          "female_percent": 48,
+          "age_distribution": {
+            "0-17": 8,
+            "18-24": 23,
+            "25-34": 23,
+            "35-44": 20,
+            "45-54": 17,
+            "55+": 13
+          }
+        }
+      ],
+      "target_audience": {
+        "description": "Birincil hedef kitle: 25-34 yaş grubu kadınlar",
+        "peak_hours": "17:00 - 21:00",
+        "recommendations": [
+          "25-34 yaş grubuna yönelik kampanyalar düzenleyin",
+          "Akşam saatlerinde personel sayısını artırın",
+          "Hafta sonu promosyonlarına odaklanın"
+        ]
+      }
+    },
+    "store_comparison": {
+      "total_stores": 2,
+      "metric": "visitors",
+      "stores": [
+        {
+          "store_id": "d6c43aa2-7412-47c9-be2e-2e619e2b099c",
+          "store_name": "Test Mağaza 2",
+          "district": "",
+          "city": "",
+          "daily_visitors": 1870,
+          "capacity": 100,
+          "avg_occupancy": 85.8,
+          "peak_occupancy": 96.8,
+          "conversion_rate": 24,
+          "avg_dwell_time": 25,
+          "score": 89.7,
+          "rank": 1
+        },
+        {
+          "store_id": "16d18512-6191-4f60-8425-595d9da0ec0f",
+          "store_name": "Forum Kadikoy",
+          "district": "",
+          "city": "",
+          "daily_visitors": 1339,
+          "capacity": 500,
+          "avg_occupancy": 86.8,
+          "peak_occupancy": 99.8,
+          "conversion_rate": 33.7,
+          "avg_dwell_time": 21,
+          "score": 76.9,
+          "rank": 2
+        }
+      ],
+      "best_performer": {
+        "store_id": "d6c43aa2-7412-47c9-be2e-2e619e2b099c",
+        "store_name": "Test Mağaza 2",
+        "district": "",
+        "city": "",
+        "daily_visitors": 1870,
+        "capacity": 100,
+        "avg_occupancy": 85.8,
+        "peak_occupancy": 96.8,
+        "conversion_rate": 24,
+        "avg_dwell_time": 25,
+        "score": 89.7,
+        "rank": 1
+      },
+      "worst_performer": {
+        "store_id": "16d18512-6191-4f60-8425-595d9da0ec0f",
+        "store_name": "Forum Kadikoy",
+        "district": "",
+        "city": "",
+        "daily_visitors": 1339,
+        "capacity": 500,
+        "avg_occupancy": 86.8,
+        "peak_occupancy": 99.8,
+        "conversion_rate": 33.7,
+        "avg_dwell_time": 21,
+        "score": 76.9,
+        "rank": 2
+      },
+      "average_visitors": 1604.5,
+      "average_occupancy": 86.3
+    },
+    "queue_analytics": {
+      "stores": [
+        {
+          "store_id": "16d18512-6191-4f60-8425-595d9da0ec0f",
+          "store_name": "Forum Kadikoy",
+          "district": "",
+          "total_checkouts": 5,
+          "active_checkouts": 4,
+          "total_queue_length": 24,
+          "avg_wait_time": 6.9,
+          "avg_efficiency": 57.8,
+          "checkouts": [
+            {
+              "checkout_id": 1,
+              "checkout_name": "Kasa 1",
+              "current_queue": 8,
+              "avg_service_time_sec": 55,
+              "estimated_wait_min": 7.3,
+              "efficiency_score": 92.6,
+              "status": "fast",
+              "customers_served_today": 198
+            },
+            {
+              "checkout_id": 2,
+              "checkout_name": "Kasa 2",
+              "current_queue": 0,
+              "avg_service_time_sec": 153,
+              "estimated_wait_min": 0,
+              "efficiency_score": 20,
+              "status": "slow",
+              "customers_served_today": 136
+            },
+            {
+              "checkout_id": 3,
+              "checkout_name": "Kasa 3",
+              "current_queue": 5,
+              "avg_service_time_sec": 100,
+              "estimated_wait_min": 8.3,
+              "efficiency_score": 59.3,
+              "status": "normal",
+              "customers_served_today": 175
+            },
+            {
+              "checkout_id": 4,
+              "checkout_name": "Kasa 4",
+              "current_queue": 5,
+              "avg_service_time_sec": 89,
+              "estimated_wait_min": 7.4,
+              "efficiency_score": 67.4,
+              "status": "normal",
+              "customers_served_today": 78
+            },
+            {
+              "checkout_id": 5,
+              "checkout_name": "Kasa 5",
+              "current_queue": 6,
+              "avg_service_time_sec": 113,
+              "estimated_wait_min": 11.3,
+              "efficiency_score": 49.6,
+              "status": "normal",
+              "customers_served_today": 184
+            }
+          ],
+          "fastest_checkout": {
+            "checkout_id": 1,
+            "checkout_name": "Kasa 1",
+            "current_queue": 8,
+            "avg_service_time_sec": 55,
+            "estimated_wait_min": 7.3,
+            "efficiency_score": 92.6,
+            "status": "fast",
+            "customers_served_today": 198
+          },
+          "slowest_checkout": {
+            "checkout_id": 2,
+            "checkout_name": "Kasa 2",
+            "current_queue": 0,
+            "avg_service_time_sec": 153,
+            "estimated_wait_min": 0,
+            "efficiency_score": 20,
+            "status": "slow",
+            "customers_served_today": 136
+          },
+          "recommendation": "Daha fazla kasa açın"
+        },
+        {
+          "store_id": "d6c43aa2-7412-47c9-be2e-2e619e2b099c",
+          "store_name": "Test Mağaza 2",
+          "district": "",
+          "total_checkouts": 6,
+          "active_checkouts": 6,
+          "total_queue_length": 21,
+          "avg_wait_time": 6.3,
+          "avg_efficiency": 56.3,
+          "checkouts": [
+            {
+              "checkout_id": 1,
+              "checkout_name": "Kasa 1",
+              "current_queue": 2,
+              "avg_service_time_sec": 94,
+              "estimated_wait_min": 3.1,
+              "efficiency_score": 63.7,
+              "status": "normal",
+              "customers_served_today": 87
+            },
+            {
+              "checkout_id": 2,
+              "checkout_name": "Kasa 2",
+              "current_queue": 6,
+              "avg_service_time_sec": 139,
+              "estimated_wait_min": 13.9,
+              "efficiency_score": 30.4,
+              "status": "slow",
+              "customers_served_today": 146
+            },
+            {
+              "checkout_id": 3,
+              "checkout_name": "Kasa 3",
+              "current_queue": 2,
+              "avg_service_time_sec": 126,
+              "estimated_wait_min": 4.2,
+              "efficiency_score": 40,
+              "status": "normal",
+              "customers_served_today": 136
+            },
+            {
+              "checkout_id": 4,
+              "checkout_name": "Kasa 4",
+              "current_queue": 5,
+              "avg_service_time_sec": 77,
+              "estimated_wait_min": 6.4,
+              "efficiency_score": 76.3,
+              "status": "fast",
+              "customers_served_today": 57
+            },
+            {
+              "checkout_id": 5,
+              "checkout_name": "Kasa 5",
+              "current_queue": 4,
+              "avg_service_time_sec": 120,
+              "estimated_wait_min": 8,
+              "efficiency_score": 44.4,
+              "status": "normal",
+              "customers_served_today": 80
+            },
+            {
+              "checkout_id": 6,
+              "checkout_name": "Kasa 6",
+              "current_queue": 2,
+              "avg_service_time_sec": 68,
+              "estimated_wait_min": 2.3,
+              "efficiency_score": 83,
+              "status": "fast",
+              "customers_served_today": 191
+            }
+          ],
+          "fastest_checkout": {
+            "checkout_id": 6,
+            "checkout_name": "Kasa 6",
+            "current_queue": 2,
+            "avg_service_time_sec": 68,
+            "estimated_wait_min": 2.3,
+            "efficiency_score": 83,
+            "status": "fast",
+            "customers_served_today": 191
+          },
+          "slowest_checkout": {
+            "checkout_id": 2,
+            "checkout_name": "Kasa 2",
+            "current_queue": 6,
+            "avg_service_time_sec": 139,
+            "estimated_wait_min": 13.9,
+            "efficiency_score": 30.4,
+            "status": "slow",
+            "customers_served_today": 146
+          },
+          "recommendation": "Daha fazla kasa açın"
+        }
+      ],
+      "summary": {
+        "total_stores": 2,
+        "avg_wait_all_stores": 6.6,
+        "stores_need_attention": 2
+      }
+    }
+  }
+}

@@ -1,0 +1,24 @@
+[Unit]
+Description=VMS360 Retail Panel - Backend API
+After=network.target mongodb.service
+Wants=mongodb.service
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/vms360/backend
+Environment="PATH=/opt/vms360/backend/venv/bin"
+EnvironmentFile=/opt/vms360/backend/.env
+ExecStart=/opt/vms360/backend/venv/bin/uvicorn server:app --host 0.0.0.0 --port 8001
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/vms360/backend.log
+StandardError=append:/var/log/vms360/backend-error.log
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

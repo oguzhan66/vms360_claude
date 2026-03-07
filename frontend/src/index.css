@@ -1,0 +1,470 @@
+@import url('https://fonts.googleapis.com/css2?family=Chivo:wght@300;400;700;900&family=JetBrains+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+    --primary: 217 91% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 240 5.9% 85%;
+    --input: 240 5.9% 85%;
+    --ring: 217 91% 50%;
+    --radius: 0.25rem;
+    --chart-1: 217 91% 50%;
+    --chart-2: 160 60% 40%;
+    --chart-3: 30 80% 50%;
+    --chart-4: 280 65% 55%;
+    --chart-5: 0 62.8% 50%;
+}
+
+.dark {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 5%;
+    --card-foreground: 0 0% 98%;
+    --popover: 240 10% 5%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+    --accent: 240 3.7% 15.9%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 3.7% 20%;
+    --input: 240 3.7% 20%;
+    --ring: 217 91% 60%;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html {
+    color-scheme: light dark;
+}
+
+html.dark {
+    color-scheme: dark;
+}
+
+body {
+    font-family: 'Manrope', sans-serif;
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    min-height: 100vh;
+}
+
+/* Light mode - subtle pattern background */
+:root body {
+    background-image: 
+        radial-gradient(circle at 25px 25px, hsl(240 5% 90%) 2px, transparent 0),
+        radial-gradient(circle at 75px 75px, hsl(240 5% 92%) 1px, transparent 0);
+    background-size: 100px 100px;
+    background-color: hsl(240 10% 97%);
+}
+
+/* Dark mode - deep dark background */
+.dark body {
+    background-image: 
+        radial-gradient(circle at 25px 25px, hsl(240 10% 8%) 1px, transparent 0),
+        radial-gradient(circle at 75px 75px, hsl(240 10% 6%) 1px, transparent 0);
+    background-size: 100px 100px;
+    background-color: hsl(240 10% 3%);
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-family: 'Chivo', sans-serif;
+    font-weight: 700;
+    letter-spacing: -0.025em;
+}
+
+.font-mono, 
+[data-mono="true"],
+.metric-value {
+    font-family: 'JetBrains Mono', monospace !important;
+}
+
+code {
+    font-family: 'JetBrains Mono', monospace;
+}
+
+@layer base {
+    * {
+        @apply border-border;
+    }
+    body {
+        @apply bg-background text-foreground;
+    }
+}
+
+/* ============ LIGHT MODE FIXES ============ */
+
+/* Light mode - text colors */
+:root .text-foreground,
+:root h1, :root h2, :root h3, :root h4, :root h5, :root h6 {
+    color: hsl(240 10% 10%) !important;
+}
+
+:root .text-muted-foreground {
+    color: hsl(240 5% 40%) !important;
+}
+
+/* Light mode - cards and containers */
+:root .store-card,
+:root .stat-card,
+:root .chart-container,
+:root .filter-bar {
+    background-color: hsl(0 0% 100%);
+    border-color: hsl(240 5.9% 85%);
+    color: hsl(240 10% 10%);
+}
+
+:root .sidebar {
+    background-color: hsl(240 5% 97%);
+    border-color: hsl(240 5.9% 90%);
+}
+
+:root .page-header {
+    background-color: hsl(0 0% 100% / 0.95);
+    border-color: hsl(240 5.9% 90%);
+}
+
+/* Light mode - stat card text */
+:root .stat-label {
+    color: hsl(240 5% 35%) !important;
+}
+
+:root .stat-value {
+    color: hsl(240 10% 10%) !important;
+}
+
+/* Light mode - chart title */
+:root .chart-title {
+    color: hsl(240 10% 10%) !important;
+}
+
+/* Light mode - buttons */
+:root button[class*="outline"],
+:root [class*="border-border"] {
+    border-color: hsl(240 5.9% 80%);
+    color: hsl(240 10% 15%);
+}
+
+:root button[class*="outline"]:hover {
+    background-color: hsl(240 4.8% 92%);
+    color: hsl(240 10% 10%);
+}
+
+:root button.border-border,
+:root [class*="border-border"] button {
+    color: hsl(240 10% 15%) !important;
+}
+
+:root button.border-border svg,
+:root [class*="border-border"] button svg {
+    color: hsl(240 10% 25%);
+}
+
+:root button.border-border:hover,
+:root [class*="border-border"] button:hover {
+    background-color: hsl(240 4.8% 90%);
+    color: hsl(240 10% 10%) !important;
+}
+
+/* ============ DARK MODE FIXES ============ */
+
+.dark .text-foreground,
+.dark h1, .dark h2, .dark h3, .dark h4, .dark h5, .dark h6 {
+    color: hsl(0 0% 98%) !important;
+}
+
+.dark .text-muted-foreground {
+    color: hsl(220 10% 70%) !important;
+}
+
+.dark .store-card,
+.dark .stat-card,
+.dark .chart-container,
+.dark .filter-bar {
+    border-color: hsl(220 10% 18%);
+    background-color: hsl(220 15% 10%);
+    color: hsl(0 0% 98%);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+/* Dark mode - stat card specific */
+.dark .stat-card .stat-label {
+    color: hsl(220 20% 80%) !important;
+    letter-spacing: 0.1em;
+}
+
+.dark .stat-card .stat-value {
+    color: hsl(0 0% 100%) !important;
+    text-shadow: 0 0 20px rgba(255, 255, 255, 0.1);
+}
+
+/* Dark mode - chart titles */
+.dark .chart-title {
+    color: hsl(0 0% 100%) !important;
+    font-weight: 600;
+}
+
+.dark .chart-container {
+    background-color: hsl(220 15% 10%);
+}
+
+.dark .sidebar {
+    background-color: hsl(220 15% 6%);
+    border-color: hsl(220 10% 15%);
+}
+
+/* Dark mode sidebar logout button */
+.dark .sidebar button[data-testid="logout-btn"] {
+    color: hsl(0 0% 95%) !important;
+    background-color: transparent;
+}
+
+.dark .sidebar button[data-testid="logout-btn"]:hover {
+    color: hsl(0 85% 60%) !important;
+    background-color: hsl(0 60% 50% / 0.1);
+}
+
+.dark .page-header {
+    background-color: hsl(220 15% 6% / 0.95);
+    border-color: hsl(220 10% 15%);
+}
+
+/* Dark mode - enhanced store card text */
+.dark .store-card h3,
+.dark .store-card .font-semibold {
+    color: hsl(0 0% 100%) !important;
+}
+
+.dark .store-card .text-foreground {
+    color: hsl(0 0% 98%) !important;
+}
+
+.dark button[class*="outline"],
+.dark [class*="border-border"] {
+    border-color: hsl(240 3.7% 25%);
+    color: hsl(0 0% 90%);
+}
+
+.dark button[class*="outline"]:hover {
+    background-color: hsl(240 3.7% 15%);
+    color: hsl(0 0% 98%);
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+:root::-webkit-scrollbar-track {
+    background: hsl(240 5% 95%);
+}
+
+:root::-webkit-scrollbar-thumb {
+    background: hsl(240 5% 75%);
+    border-radius: 3px;
+}
+
+.dark::-webkit-scrollbar-track {
+    background: hsl(240 10% 5%);
+}
+
+.dark::-webkit-scrollbar-thumb {
+    background: hsl(240 3.7% 25%);
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: hsl(240 3.7% 45%);
+}
+
+/* Status Colors */
+.status-normal {
+    color: #10B981;
+}
+
+.status-warning {
+    color: #F59E0B;
+}
+
+.status-critical {
+    color: #EF4444;
+}
+
+.bg-status-normal {
+    background-color: rgba(16, 185, 129, 0.1);
+    border-color: #10B981;
+}
+
+.bg-status-warning {
+    background-color: rgba(245, 158, 11, 0.1);
+    border-color: #F59E0B;
+}
+
+.bg-status-critical {
+    background-color: rgba(239, 68, 68, 0.1);
+    border-color: #EF4444;
+}
+
+/* Card Styles */
+.tech-card {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(12px);
+}
+
+.tech-card-active {
+    border-top: 2px solid hsl(217 91% 60%);
+}
+
+/* Animations */
+@keyframes pulse-glow {
+    0%, 100% {
+        box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4);
+    }
+    50% {
+        box-shadow: 0 0 0 8px rgba(59, 130, 246, 0);
+    }
+}
+
+.pulse-glow {
+    animation: pulse-glow 2s infinite;
+}
+
+@keyframes fade-in {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.animate-fade-in {
+    animation: fade-in 0.3s ease-out;
+}
+
+/* Glass Effect */
+.glass {
+    background: rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* Progress Bars */
+.progress-normal {
+    background: linear-gradient(90deg, #10B981 0%, #10B981 100%);
+}
+
+.progress-warning {
+    background: linear-gradient(90deg, #F59E0B 0%, #F59E0B 100%);
+}
+
+.progress-critical {
+    background: linear-gradient(90deg, #EF4444 0%, #EF4444 100%);
+}
+
+/* Sidebar */
+.sidebar-link {
+    transition: background-color 0.2s, color 0.2s;
+}
+
+.sidebar-link:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+.sidebar-link.active {
+    background-color: rgba(59, 130, 246, 0.1);
+    color: hsl(217 91% 60%);
+    border-left: 2px solid hsl(217 91% 60%);
+}
+
+/* Data grid layout */
+.bento-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 1rem;
+}
+
+@media (min-width: 1280px) {
+    .bento-grid {
+        grid-template-columns: repeat(4, 1fr);
+    }
+}
+
+/* Data Table Styles */
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+}
+
+.data-table th {
+    text-align: left;
+    padding: 0.75rem 1rem;
+    background-color: hsl(var(--secondary));
+    color: hsl(var(--foreground));
+    font-weight: 600;
+    border-bottom: 1px solid hsl(var(--border));
+    text-transform: uppercase;
+    font-size: 0.75rem;
+    letter-spacing: 0.05em;
+}
+
+.data-table td {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid hsl(var(--border));
+    color: hsl(var(--foreground));
+}
+
+.data-table tbody tr:hover {
+    background-color: hsl(var(--secondary) / 0.5);
+}
+
+.dark .data-table th {
+    background-color: hsl(220 15% 12%);
+}
+
+.dark .data-table td {
+    border-color: hsl(220 10% 18%);
+}
+
+.dark .data-table tbody tr:hover {
+    background-color: hsl(220 15% 15%);
+}
+
+@layer base {
+    [data-debug-wrapper="true"] {
+        display: contents !important;
+    }
+}

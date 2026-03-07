@@ -1,0 +1,64 @@
+{
+  "summary": "Verified scheduled reports date_range bug fix. The issue was that date_range='7d' was saved as NULL in database and report.get('date_range', '1d') returned None instead of '1d'. Fix: Use `report.get('date_range') or '1d'` instead. All 12 backend tests pass. Frontend UI correctly displays date_range values.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_scheduled_reports_date_range.py",
+    "/app/test_reports/pytest/scheduled_reports_date_range_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Bug fix verified: Line 4958 in server.py uses `report.get('date_range') or '1d'` instead of `report.get('date_range', '1d')` to handle None values correctly",
+    "The routers/scheduled_reports.py router was disabled (line 117-118) because it didn't support date_range - server.py endpoints are used instead"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_scheduled_reports_date_range.py"
+  ],
+  "success_rate": {
+    "backend": "100% (12/12 tests passed)",
+    "frontend": "100% (Scheduled Reports page loads, displays date_range correctly, create/update works)"
+  },
+  "test_credentials": {
+    "username": "admin",
+    "password": "12345"
+  },
+  "seed_data_creation": "Used existing scheduled report: Test Rapor 1 Hafta (ID: 8c8c02ec-d77b-4e5b-a3fc-185bced05e08) with date_range='7d'",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Scheduled reports date_range fix is verified. The key fix is using `or` instead of default value in dict.get() because None is a valid dict value. Test report 'Test Rapor 1 Hafta' with 7d date_range generates 8869 entries correctly.",
+  "bug_verification": {
+    "original_issue": "Scheduled reports with date_range='7d' were sending empty content because date_range was saved as NULL in database and report.get('date_range', '1d') returned None instead of '1d'",
+    "fix_applied": [
+      "1. Line 4958: Changed `report.get('date_range', '1d')` to `report.get('date_range') or '1d'`",
+      "2. Disabled routers/scheduled_reports.py router (line 117-118) which didn't support date_range",
+      "3. Added debug endpoint /api/debug/fix-null-date-ranges to fix existing NULL values"
+    ],
+    "verification_results": {
+      "1d_report_data_count": 3,
+      "1d_total_in": 8,
+      "7d_report_data_count": 5,
+      "7d_total_in": 8869,
+      "30d_report_data_count": 5,
+      "30d_total_in": 9357,
+      "date_range_saved_correctly": true
+    }
+  },
+  "features_tested": {
+    "/api/debug/test-report-generation?date_range=1d": "PASS - Returns 3 items, 8 total_in",
+    "/api/debug/test-report-generation?date_range=7d": "PASS - Returns 5 items, 8869 total_in",
+    "/api/debug/test-report-generation?date_range=30d": "PASS - Returns 5 items, 9357 total_in",
+    "/api/scheduled-reports (POST)": "PASS - Creates report with date_range saved correctly",
+    "/api/scheduled-reports/{id} (PUT)": "PASS - Updates date_range correctly",
+    "/api/scheduled-reports/{id}/send-now": "PASS - Endpoint works (SMTP may fail if not configured)",
+    "/api/debug/scheduled-reports-check": "PASS - Shows all reports with their date_range values",
+    "/api/debug/fix-null-date-ranges": "PASS - Fixes NULL date_range values",
+    "Frontend Scheduled Reports page": "PASS - Displays date_range as 'Son 1 Gün', 'Son 7 Gün', 'Son 30 Gün'"
+  }
+}

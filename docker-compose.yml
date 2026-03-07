@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:6.0
+    container_name: vms360-mongodb
+    restart: always
+    volumes:
+      - mongodb_data:/data/db
+    ports:
+      - "27017:27017"
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    container_name: vms360-backend
+    restart: always
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    environment:
+      - MONGO_URL=mongodb://mongodb:27017
+      - DB_NAME=vms360
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-change-this-secret-key}
+    ports:
+      - "8001:8001"
+    healthcheck:
+      test: curl -f http://localhost:8001/health || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    build: ./frontend
+    container_name: vms360-frontend
+    restart: always
+    depends_on:
+      - backend
+    ports:
+      - "3001:3000"
+
+volumes:
+  mongodb_data:
+    driver: local
