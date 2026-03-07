@@ -298,7 +298,7 @@ async def export_heatmap_pdf(request: HeatmapRequest):
     cameras = await db.cameras.find({"floor_id": request.floor_id}, {"_id": 0}).to_list(100)
     
     # Logo URL
-    logo_url = "https://customer-assets.emergentagent.com/job_retail-footfall/artifacts/bjfv2q4b_image.png"
+    logo_url = ""
     
     # Canvas image (passed from frontend)
     canvas_image = getattr(request, 'canvas_image', None) or ""
