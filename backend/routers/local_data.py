@@ -595,7 +595,9 @@ async def get_hourly_traffic_report(
     now = datetime.now(timezone.utc)
     today = now.strftime("%Y-%m-%d")
     
-    if date_range == "1d":
+    if date_from and date_to:
+        start_date=date_from;end_date=date_to
+    elif date_range == "1d":
         start_date = end_date = today
     elif date_range in ("1w", "7d"):
         start_date = (now - timedelta(days=7)).strftime("%Y-%m-%d")
@@ -673,7 +675,9 @@ async def get_store_comparison(
     now = datetime.now(timezone.utc)
     today = now.strftime("%Y-%m-%d")
     
-    if date_range == "1d":
+    if date_from and date_to:
+        start_date=date_from;end_date=date_to
+    elif date_range == "1d":
         start_date = end_date = today
     elif date_range in ("1w", "7d"):
         start_date = (now - timedelta(days=7)).strftime("%Y-%m-%d")
@@ -794,7 +798,9 @@ async def get_advanced_queue_analysis(
     now = datetime.now(timezone.utc)
     today = now.strftime("%Y-%m-%d")
     
-    if date_range == "1d":
+    if date_from and date_to:
+        start_date=date_from;end_date=date_to
+    elif date_range == "1d":
         start_date = end_date = today
     elif date_range in ("1w", "7d"):
         start_date = (now - timedelta(days=7)).strftime("%Y-%m-%d")
@@ -978,7 +984,9 @@ async def get_demographics_report(
     now = datetime.now(timezone.utc)
     today = now.strftime("%Y-%m-%d")
     
-    if date_range == "1d":
+    if date_from and date_to:
+        start_date=date_from;end_date=date_to
+    elif date_range == "1d":
         start_date = end_date = today
     elif date_range in ("1w", "7d"):
         start_date = (now - timedelta(days=7)).strftime("%Y-%m-%d")
