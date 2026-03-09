@@ -369,7 +369,7 @@ async def get_counter_report(
     stores = []
     
     # For today without hour filter, use latest snapshots (real-time data)
-    if start_date == today and end_date == today and hour_from is None and hour_to is None:
+    if start_date == end_date == today and hour_from is None and hour_to is None and date_from is None and date_to is None:
         snapshots = await get_latest_store_snapshots(filtered_ids, "counter")
         for snap in snapshots:
             # Skip deleted stores
@@ -425,9 +425,13 @@ async def get_counter_report(
             {"$sort": {"hour": -1, "minute": -1}},
             {"$group": {
                 "_id": {"store_id": "$store_id", "date": "$date"},
-                "latest": {"$first": "$$ROOT"}
+                "total_in": {"$max": "$total_in"},
+                "total_out": {"$max": "$total_out"},
+                "current_visitors": {"$last": "$current_visitors"},
+                "store_name": {"$first": "$store_name"},
+                "store_id": {"$first": "$store_id"}
             }},
-            {"$replaceRoot": {"newRoot": "$latest"}},
+            
             {"$project": {"_id": 0}}
         ]
         snapshots = await db.counter_snapshots.aggregate(pipeline).to_list(10000)
@@ -435,7 +439,7 @@ async def get_counter_report(
         # Aggregate by store across all days
         store_data = {}
         for snap in snapshots:
-            sid = snap["store_id"]
+            sid = snap["_id"]["store_id"] if isinstance(snap.get("_id"), dict) else snap.get("store_id", snap.get("_id", {}).get("store_id", ""))
             # Skip deleted stores
             if sid not in active_store_ids:
                 continue
@@ -691,9 +695,9 @@ async def get_store_comparison(
         {"$sort": {"hour": -1, "minute": -1}},
         {"$group": {
             "_id": {"store_id": "$store_id", "date": "$date"},
-            "latest": {"$first": "$$ROOT"}
+            "total_in": {"$max": "$total_in"}, "total_out": {"$max": "$total_out"}, "store_name": {"$first": "$store_name"}
         }},
-        {"$replaceRoot": {"newRoot": "$latest"}},
+        
         {"$project": {"_id": 0}}
     ]
     snapshots = await db.counter_snapshots.aggregate(pipeline).to_list(10000)
