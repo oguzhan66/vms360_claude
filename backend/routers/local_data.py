@@ -963,6 +963,8 @@ async def get_weekday_comparison(
 async def get_demographics_report(
     store_ids: Optional[str] = None,
     date_range: str = "1d",
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
     user: dict = Depends(require_auth)
 ):
     """Get demographics report from local database (analytics_snapshots)"""
