@@ -987,31 +987,48 @@ async def get_demographics_report(
     if filtered_ids:
         query["store_id"] = {"$in": filtered_ids}
     
-    # Get analytics snapshots from database
-    snapshots = await db.analytics_snapshots.find(query, {"_id": 0}).to_list(10000)
-    
-    logger.info(f"Demographics: Found {len(snapshots)} analytics snapshots for {start_date} to {end_date}")
-    
-    # Aggregate gender and age data
+    # Get data: today from analytics_snapshots, historical from daily_reports
     gender_dist = {"Male": 0, "Female": 0, "Unknown": 0}
     age_dist = {"0-17": 0, "18-24": 0, "25-34": 0, "35-44": 0, "45-54": 0, "55+": 0}
     total = 0
-    
-    for snap in snapshots:
-        snap_gender = snap.get("gender_distribution", {})
-        snap_age = snap.get("age_distribution", {})
-        
-        for k, v in snap_gender.items():
-            if k in gender_dist:
-                gender_dist[k] += v
-            else:
-                gender_dist["Unknown"] += v
-        
-        for k, v in snap_age.items():
-            if k in age_dist:
-                age_dist[k] += v
-        
-        total += snap.get("total_events", 0)
+    if start_date == end_date == today:
+        snapshots = await db.analytics_snapshots.find(query, {"_id": 0}).to_list(10000)
+        logger.info(f"Demographics today: Found {len(snapshots)} snapshots")
+        for snap in snapshots:
+            snap_gender = snap.get("gender_distribution", {})
+            snap_age = snap.get("age_distribution", {})
+            for k, v in snap_gender.items():
+                if k in gender_dist:
+                    gender_dist[k] += v
+                else:
+                    gender_dist["Unknown"] += v
+            for k, v in snap_age.items():
+                if k in age_dist:
+                    age_dist[k] += v
+            total += snap.get("total_events", 0)
+    else:
+        dr_query = {"date": {"$gte": start_date, "$lte": end_date}}
+        if filtered_ids:
+            dr_query["store_id"] = {"$in": filtered_ids}
+        daily_docs = await db.daily_reports.find(dr_query, {"_id": 0}).to_list(1000)
+        logger.info(f"Demographics historical: Found {len(daily_docs)} daily reports")
+        seen_dates = set()
+        for doc in daily_docs:
+            date_key = doc.get("date")
+            if date_key in seen_dates:
+                continue
+            seen_dates.add(date_key)
+            fr = doc.get("fr_analytics", {})
+            gender_dist["Male"] += fr.get("male", 0)
+            gender_dist["Female"] += fr.get("female", 0)
+            gender_dist["Unknown"] += fr.get("unknown_gender", 0)
+            age_dist["0-17"] += fr.get("age_0_17", 0)
+            age_dist["18-24"] += fr.get("age_18_24", 0)
+            age_dist["25-34"] += fr.get("age_25_34", 0)
+            age_dist["35-44"] += fr.get("age_35_44", 0)
+            age_dist["45-54"] += fr.get("age_45_54", 0)
+            age_dist["55+"] += fr.get("age_55_64", 0) + fr.get("age_65_plus", 0)
+            total += fr.get("in", 0)
     
     # Calculate percentages
     gender_percent = {k: round(v / total * 100, 1) if total > 0 else 0 for k, v in gender_dist.items()}
