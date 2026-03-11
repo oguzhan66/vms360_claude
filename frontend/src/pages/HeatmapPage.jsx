@@ -55,6 +55,9 @@ const HeatmapPage = () => {
   // Report generation mode (removed live mode)
   const [viewMode, setViewMode] = useState('report'); // 'report', 'compare'
   
+  // Resolution mode
+  const [resolutionMode, setResolutionMode] = useState('auto'); // auto | realtime | daily
+
   // Date range for report generation
   const [dateFrom, setDateFrom] = useState(() => {
     const d = new Date();
@@ -131,7 +134,8 @@ const HeatmapPage = () => {
       const res = await heatmapApi.getRange(selectedFloor.floor_id, {
         date_from: new Date(dateFrom).toISOString(),
         date_to: new Date(dateTo).toISOString(),
-        interval_minutes: 60
+        interval_minutes: 60,
+        mode: resolutionMode
       });
       
       if (res.data.timeline_data?.length > 0) {
@@ -1508,11 +1512,23 @@ const HeatmapPage = () => {
                         </div>
                       </div>
                       
+                     <div className="mb-3">
+                        <Label className="text-xs text-muted-foreground">Çözünürlük</Label>
+                        <Select value={resolutionMode} onValueChange={setResolutionMode}>
+                          <SelectTrigger className="h-9 text-sm bg-background/50 border-white/10">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="auto">Otomatik (tarih aralığına göre)</SelectItem>
+                            <SelectItem value="realtime">Gerçek Zamanlı (5 dk) - kısa dönem</SelectItem>
+                            <SelectItem value="daily">Günlük Özet - uzun dönem</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
                       <div className="flex gap-2">
-                        <Button 
-                          onClick={generateHeatmapReport} 
-                          className="flex-1"
-                          disabled={generatingReport}
+                        <Button
+                          onClick={generateHeatmapReport}
                         >
                           {generatingReport ? (
                             <>

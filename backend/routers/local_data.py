@@ -766,19 +766,27 @@ async def get_store_comparison(
 async def get_advanced_queue_analysis(
     store_ids: Optional[str] = None,
     date_range: str = "1d",
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     user: dict = Depends(require_auth)
 ):
     """Advanced queue analysis from local database"""
     import logging
     logger = logging.getLogger(__name__)
     logger.info(f"Queue analysis report: date_range={date_range}")
-    
+
     filtered_ids = await get_filtered_store_ids(user, store_ids)
-    
+
     # Calculate date range
     now = datetime.now(timezone.utc)
     today = now.strftime("%Y-%m-%d")
-    
+
+    # Normalize: accept date_from/date_to or start_date/end_date
+    date_from = date_from or start_date
+    date_to = date_to or end_date
+
     if date_from and date_to:
         start_date=date_from;end_date=date_to
     elif date_range == "1d":

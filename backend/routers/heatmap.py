@@ -101,7 +101,8 @@ async def get_heatmap_range(
     floor_id: str,
     date_from: str = Query(..., description="Start date (ISO format)"),
     date_to: str = Query(..., description="End date (ISO format)"),
-    interval_minutes: int = Query(60, description="Aggregation interval in minutes")
+    interval_minutes: int = Query(60, description="Aggregation interval in minutes"),
+    mode: str = Query("auto", description="realtime | daily | auto")
 ):
     """
     Get heatmap data for a specific time range.
@@ -121,9 +122,72 @@ async def get_heatmap_range(
     except ValueError:
         raise HTTPException(status_code=400, detail="Gecersiz tarih formati")
     
-    # Get cameras on this floor
+   # Get cameras on this floor
     cameras = await db.cameras.find({"floor_id": floor_id}, {"_id": 0}).to_list(100)
-    
+
+    # Auto mode: decide based on date range
+    from datetime import date as date_type
+    days_diff = (end_date.date() - start_date.date()).days
+    if mode == "auto":
+        mode = "realtime" if days_diff <= 2 else "daily"
+
+    # DAILY MODE: use daily_reports for long-term heatmap
+    if mode == "daily":
+        start_str = start_date.strftime("%Y-%m-%d")
+        end_str = end_date.strftime("%Y-%m-%d")
+        daily_docs = await db.daily_reports.find(
+            {"store_id": store_id, "date": {"$gte": start_str, "$lte": end_str}},
+            {"_id": 0}
+        ).to_list(1000)
+
+        # Aggregate camera totals (in + out) across all days
+        camera_totals = {}
+        for doc in daily_docs:
+            for cam in doc.get("counter", {}).get("cameras", []):
+                name = cam.get("camera_name", "")
+                if name not in camera_totals:
+                    camera_totals[name] = {"camera_name": name, "total": 0}
+                camera_totals[name]["total"] += cam.get("in", 0) + cam.get("out", 0)
+
+        # Match with camera positions
+        camera_data = []
+        for cam in cameras:
+            name = cam.get("name", "")
+            total = camera_totals.get(name, {}).get("total", 0)
+            camera_data.append({
+                "camera_id": cam.get("id") or cam.get("camera_vms_id"),
+                "camera_vms_id": cam.get("camera_vms_id"),
+                "name": name,
+                "position_x": cam.get("position_x", 0),
+                "position_y": cam.get("position_y", 0),
+                "direction": cam.get("direction", 0),
+                "fov_angle": cam.get("fov_angle", 90),
+                "influence_radius": cam.get("influence_radius", 5),
+                "in_count": total
+            })
+
+        return {
+            "floor_id": floor_id,
+            "floor_name": floor.get("name", ""),
+            "store_id": store_id,
+            "width_meters": floor.get("width_meters", 50),
+            "height_meters": floor.get("height_meters", 30),
+            "grid_size": floor.get("grid_size", 2),
+            "plan_image_data": floor.get("plan_image_data"),
+            "zones": floor.get("zones", []),
+            "date_from": date_from,
+            "date_to": date_to,
+            "mode": "daily",
+            "timeline_data": [{
+                "timestamp": end_date.isoformat(),
+                "total_in": sum(c["in_count"] for c in camera_data),
+                "total_out": 0,
+                "cameras": camera_data
+            }],
+            "hourly_summary": [],
+            "total_snapshots": len(daily_docs)
+        }
+
     # Get counter snapshots in range
     snapshots = await db.counter_snapshots.find(
         {

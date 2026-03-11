@@ -1027,16 +1027,74 @@ async def collect_daily_vms_report(target_date: str = None):
         except Exception as e:
             logger.error(f"Counter report error: {e}")
 
-        # 2. FR Analytics report (Combined: age + gender + in/out)
+        # Get stores and cameras for mapping
+        stores = await db.stores.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(100)
+        cameras = await db.cameras.find({}, {"_id": 0, "id": 1, "name": 1, "camera_vms_id": 1, "store_id": 1, "floor_id": 1, "type": 1}).to_list(500)
+        floors = await db.floors.find({}, {"_id": 0, "id": 1, "store_id": 1}).to_list(100)
+        floor_store_map = {f["id"]: f["store_id"] for f in floors}
+        for cam in cameras:
+            if not cam.get("store_id") and cam.get("floor_id"):
+                cam["store_id"] = floor_store_map.get(cam["floor_id"], "")
+        # Only cameras assigned to a store — used for all type mappings
+        camera_store_map = {
+            cam["camera_vms_id"]: cam.get("store_id")
+            for cam in cameras
+            if cam.get("camera_vms_id") and cam.get("store_id")
+        }
+        # Camera IDs per type, only store-assigned ones
+        counter_camera_ids = [
+            cam["camera_vms_id"]
+            for cam in cameras
+            if cam.get("type") == "counter" and cam.get("store_id") and cam.get("camera_vms_id")
+        ]
+        queue_camera_ids = [
+            cam["camera_vms_id"]
+            for cam in cameras
+            if cam.get("type") == "queue" and cam.get("store_id") and cam.get("camera_vms_id")
+        ]
+        fr_camera_ids = [
+            cam["camera_vms_id"]
+            for cam in cameras
+            if cam.get("type") == "analytics" and cam.get("store_id") and cam.get("camera_vms_id")
+        ]
+
+        # 2. Queue — aggregate from our own queue_snapshots (VMS has no queue report API)
+        store_queue = {}
+        try:
+            queue_pipeline = [
+                {"$match": {"date": target_date}},
+                {"$group": {
+                    "_id": "$store_id",
+                    "avg_queue": {"$avg": "$total_queue_length"},
+                    "max_queue": {"$max": "$total_queue_length"},
+                    "avg_wait_seconds": {"$avg": "$avg_wait_time_seconds"},
+                    "snapshot_count": {"$sum": 1}
+                }}
+            ]
+            queue_agg = await db.queue_snapshots.aggregate(queue_pipeline).to_list(100)
+            for row in queue_agg:
+                sid = row["_id"]
+                store_queue[sid] = {
+                    "avg_queue": round(row["avg_queue"] or 0, 2),
+                    "max_queue": row["max_queue"] or 0,
+                    "avg_wait_seconds": round(row["avg_wait_seconds"] or 0, 1),
+                    "snapshot_count": row["snapshot_count"],
+                    "source": "snapshots"
+                }
+            logger.info(f"Queue aggregated from snapshots for {len(store_queue)} stores on {target_date}")
+        except Exception as e:
+            logger.error(f"Queue snapshot aggregation error: {e}")
+
+        # 3. FR Analytics report — per camera so we can map to store
         fr_data = None
         try:
             fr_payload = {
                 "timeFrom": time_from,
                 "timeTo": time_to,
                 "axisXsize": "Day",
-                "summarizeCameras": True,
+                "summarizeCameras": False,
                 "reportType": "Combined",
-                "cameraIds": []
+                "cameraIds": fr_camera_ids
             }
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.post(
@@ -1049,65 +1107,82 @@ async def collect_daily_vms_report(target_date: str = None):
         except Exception as e:
             logger.error(f"FR analytics report error: {e}")
 
-        # Get stores for mapping camera names to store_ids
-        stores = await db.stores.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(100)
-        cameras = await db.cameras.find({}, {"_id": 0, "id": 1, "name": 1, "camera_vms_id": 1, "store_id": 1, "floor_id": 1}).to_list(500)
-        floors = await db.floors.find({}, {"_id": 0, "id": 1, "store_id": 1}).to_list(100)
-        floor_store_map = {f["id"]: f["store_id"] for f in floors}
-        for cam in cameras:
-            if not cam.get("store_id") and cam.get("floor_id"):
-                cam["store_id"] = floor_store_map.get(cam["floor_id"], "")
-        camera_store_map = {cam["camera_vms_id"]: cam.get("store_id") for cam in cameras if cam.get("camera_vms_id")}
+        def _resolve_store(cam_id, cam_name):
+            """Match camera to store: by ID first, then by name (only store-assigned cameras)."""
+            sid = camera_store_map.get(cam_id)
+            if not sid:
+                for cam in cameras:
+                    if cam.get("store_id") and (
+                        cam.get("name", "") == cam_name or cam_name in cam.get("name", "")
+                    ):
+                        sid = cam.get("store_id")
+                        break
+            return sid
 
-        # Process counter rows - group by store
+        # Process counter rows — only store-assigned cameras
         store_counter = {}
         if counter_data:
             for row in counter_data.get("rows", []):
+                cam_id = row.get("cameraId", "")
                 cam_name = row.get("cameraName", "")
-                # Find camera by name match
-                cam_store_id = None
-                for cam in cameras:
-                    if cam.get("name", "") == cam_name or cam_name in cam.get("name", ""):
-                        cam_store_id = cam.get("store_id")
-                        break
-
-                day_key = target_date
-                day_data = row.get(day_key, {})
+                cam_store_id = _resolve_store(cam_id, cam_name)
+                if not cam_store_id:
+                    continue
+                day_data = row.get(target_date, {})
                 in_val = day_data.get("in", 0)
                 out_val = day_data.get("out", 0)
                 inside_val = day_data.get("inside", 0)
+                if cam_store_id not in store_counter:
+                    store_counter[cam_store_id] = {"total_in": 0, "total_out": 0, "cameras": []}
+                store_counter[cam_store_id]["total_in"] += in_val
+                store_counter[cam_store_id]["total_out"] += out_val
+                store_counter[cam_store_id]["cameras"].append({
+                    "camera_name": cam_name,
+                    "in": in_val,
+                    "out": out_val,
+                    "inside": inside_val
+                })
 
-                if cam_store_id:
-                    if cam_store_id not in store_counter:
-                        store_counter[cam_store_id] = {"total_in": 0, "total_out": 0, "cameras": []}
-                    store_counter[cam_store_id]["total_in"] += in_val
-                    store_counter[cam_store_id]["total_out"] += out_val
-                    store_counter[cam_store_id]["cameras"].append({
-                        "camera_name": cam_name,
-                        "in": in_val,
-                        "out": out_val,
-                        "inside": inside_val
-                    })
-
-        # Process FR analytics
-        fr_summary = {}
+        # Process FR analytics — per camera, group by store
+        store_fr = {}
         if fr_data:
             for row in fr_data.get("rows", []):
-                fr_summary = {
-                    "in": row.get("in", 0),
-                    "out": row.get("out", 0),
-                    "unique": row.get("unique", 0),
-                    "male": row.get("male", 0),
-                    "female": row.get("female", 0),
-                    "unknown_gender": row.get("unknown", 0),
-                    "age_0_17": row.get("age_0_17", 0),
-                    "age_18_24": row.get("age_18_24", 0),
-                    "age_25_34": row.get("age_25_34", 0),
-                    "age_35_44": row.get("age_35_44", 0),
-                    "age_45_54": row.get("age_45_54", 0),
-                    "age_55_64": row.get("age_55_64", 0),
-                    "age_65_plus": row.get("age_65_plus", 0)
-                }
+                cam_id = row.get("cameraId", "")
+                cam_name = row.get("cameraName", "")
+                # Match by cameraId first, then by name
+                cam_store_id = camera_store_map.get(cam_id)
+                if not cam_store_id:
+                    for cam in cameras:
+                        if cam.get("name", "") == cam_name or cam_name in cam.get("name", ""):
+                            cam_store_id = cam.get("store_id")
+                            break
+                if not cam_store_id:
+                    continue
+
+                def _add(a, b):
+                    return (a or 0) + (b or 0)
+
+                if cam_store_id not in store_fr:
+                    store_fr[cam_store_id] = {
+                        "in": 0, "out": 0, "unique": 0,
+                        "male": 0, "female": 0, "unknown_gender": 0,
+                        "age_0_17": 0, "age_18_24": 0, "age_25_34": 0,
+                        "age_35_44": 0, "age_45_54": 0, "age_55_64": 0, "age_65_plus": 0
+                    }
+                s = store_fr[cam_store_id]
+                s["in"] = _add(s["in"], row.get("in", 0))
+                s["out"] = _add(s["out"], row.get("out", 0))
+                s["unique"] = _add(s["unique"], row.get("unique", 0))
+                s["male"] = _add(s["male"], row.get("male", 0))
+                s["female"] = _add(s["female"], row.get("female", 0))
+                s["unknown_gender"] = _add(s["unknown_gender"], row.get("unknown", 0))
+                s["age_0_17"] = _add(s["age_0_17"], row.get("age_0_17", 0))
+                s["age_18_24"] = _add(s["age_18_24"], row.get("age_18_24", 0))
+                s["age_25_34"] = _add(s["age_25_34"], row.get("age_25_34", 0))
+                s["age_35_44"] = _add(s["age_35_44"], row.get("age_35_44", 0))
+                s["age_45_54"] = _add(s["age_45_54"], row.get("age_45_54", 0))
+                s["age_55_64"] = _add(s["age_55_64"], row.get("age_55_64", 0))
+                s["age_65_plus"] = _add(s["age_65_plus"], row.get("age_65_plus", 0))
 
         # Save to daily_reports collection
         operations = []
@@ -1120,7 +1195,8 @@ async def collect_daily_vms_report(target_date: str = None):
                 "store_name": store["name"],
                 "source": "vms_report_api",
                 "counter": counter_info,
-                "fr_analytics": fr_summary if fr_summary else {},
+                "queue": store_queue.get(sid, {}),
+                "fr_analytics": store_fr.get(sid, {}),
                 "collected_at": datetime.now(timezone.utc).isoformat()
             }
             operations.append(UpdateOne(
