@@ -677,12 +677,7 @@ async def get_store_comparison(
     else:
         start_date = end_date = today
     
-    # Build query
-    query = {"date": {"$gte": start_date, "$lte": end_date}}
-    if filtered_ids:
-        query["store_id"] = {"$in": filtered_ids}
-    
-   # Get data from daily_reports
+    # Get data from daily_reports
     dr_query = {"date": {"$gte": start_date, "$lte": end_date}}
     if filtered_ids:
         dr_query["store_id"] = {"$in": filtered_ids}
@@ -698,6 +693,20 @@ async def get_store_comparison(
             "stores": [],
             "data_source": "local_warehouse"
         }
+
+    # Fetch store metadata (capacity + location)
+    store_ids_in_docs = list({doc["store_id"] for doc in daily_docs if doc.get("store_id")})
+    stores_meta = await db.stores.find({"id": {"$in": store_ids_in_docs}}, {"_id": 0}).to_list(200)
+    stores_meta_map = {s["id"]: s for s in stores_meta}
+
+    # Fetch districts and cities for location enrichment
+    district_ids = list({s.get("district_id") for s in stores_meta if s.get("district_id")})
+    districts = await db.districts.find({"id": {"$in": district_ids}}, {"_id": 0}).to_list(200)
+    district_map = {d["id"]: d for d in districts}
+    city_ids = list({d.get("city_id") for d in districts if d.get("city_id")})
+    cities = await db.cities.find({"id": {"$in": city_ids}}, {"_id": 0}).to_list(200)
+    city_map = {c["id"]: c for c in cities}
+
     # Aggregate by store
     store_data = {}
     for doc in daily_docs:
@@ -705,58 +714,95 @@ async def get_store_comparison(
         if not sid:
             continue
         counter = doc.get("counter", {})
+        queue = doc.get("queue", {})
+        fr = doc.get("fr_analytics", {})
         if sid not in store_data:
             store_data[sid] = {
                 "store_id": sid,
                 "store_name": doc.get("store_name", "Bilinmiyor"),
                 "total_in": 0,
                 "total_out": 0,
-                "max_visitors": 0,
-                "days": 0
+                "days": 0,
+                "avg_queue_sum": 0,
+                "max_queue": 0,
+                "total_male": 0,
+                "total_female": 0,
+                "total_visitors_fr": 0,
             }
         store_data[sid]["total_in"] += counter.get("total_in", 0)
         store_data[sid]["total_out"] += counter.get("total_out", 0)
         store_data[sid]["days"] += 1
-    
-    counter_data = list(store_data.values())
-    for s in counter_data:
-        s["current_visitors"] = max(0, s["total_in"] - s["total_out"])
-        s["occupancy_percent"] = 0  # Would need capacity info
-    
+        store_data[sid]["avg_queue_sum"] += queue.get("avg_queue_length", 0)
+        store_data[sid]["max_queue"] = max(store_data[sid]["max_queue"], queue.get("max_queue_length", 0))
+        store_data[sid]["total_male"] += fr.get("total_male", 0)
+        store_data[sid]["total_female"] += fr.get("total_female", 0)
+        store_data[sid]["total_visitors_fr"] += fr.get("total_visitors", 0)
+
+    # Enrich with capacity and location
+    counter_data = []
+    for sid, s in store_data.items():
+        meta = stores_meta_map.get(sid, {})
+        capacity = meta.get("capacity", 0)
+        net_visitors = max(0, s["total_in"] - s["total_out"])
+        occ = round(net_visitors / capacity * 100, 1) if capacity > 0 else 0
+
+        district = district_map.get(meta.get("district_id", ""), {})
+        city = city_map.get(district.get("city_id", ""), {})
+
+        days = s["days"] or 1
+        avg_queue = round(s["avg_queue_sum"] / days, 2)
+        total_fr = s["total_visitors_fr"] or 1
+        male_pct = round(s["total_male"] / total_fr * 100, 1) if s["total_visitors_fr"] > 0 else 0
+        female_pct = round(s["total_female"] / total_fr * 100, 1) if s["total_visitors_fr"] > 0 else 0
+
+        counter_data.append({
+            "store_id": sid,
+            "store_name": s["store_name"],
+            "city": city.get("name", ""),
+            "district": district.get("name", ""),
+            "capacity": capacity,
+            "total_in": s["total_in"],
+            "total_out": s["total_out"],
+            "net_visitors": net_visitors,
+            "occupancy_percent": occ,
+            "avg_queue_length": avg_queue,
+            "max_queue_length": s["max_queue"],
+            "male_count": s["total_male"],
+            "female_count": s["total_female"],
+            "male_percent": male_pct,
+            "female_percent": female_pct,
+            "days": days,
+        })
+
     # Calculate averages
-    avg_visitors = sum(s.get("current_visitors", 0) for s in counter_data) / len(counter_data) if counter_data else 0
-    avg_in = sum(s.get("total_in", 0) for s in counter_data) / len(counter_data) if counter_data else 0
-    
-    # Build comparison
+    avg_in = sum(s["total_in"] for s in counter_data) / len(counter_data) if counter_data else 0
+    avg_occ = sum(s["occupancy_percent"] for s in counter_data) / len(counter_data) if counter_data else 0
+
+    # Build final comparison with deviation
     store_comparison = []
     for s in counter_data:
-        visitors = s.get("total_in", 0)
-        variance = round(((visitors - avg_in) / avg_in * 100) if avg_in > 0 else 0, 1)
-        
+        dev = round(((s["total_in"] - avg_in) / avg_in * 100) if avg_in > 0 else 0, 1)
         store_comparison.append({
-            "store_id": s["store_id"],
-            "store_name": s["store_name"],
-            "total_in": s.get("total_in", 0),
-            "total_out": s.get("total_out", 0),
-            "current_visitors": s.get("current_visitors", 0),
-            "occupancy_percent": s.get("occupancy_percent", 0),
-            "variance_from_avg": variance,
-            "status": "normal"
+            **s,
+            "current_visitors": s["net_visitors"],
+            "deviation_percent": dev,
+            "performance": "above" if dev >= 0 else "below",
         })
-    
+
     # Sort by total_in descending
     store_comparison.sort(key=lambda x: x["total_in"], reverse=True)
-    
+
     return {
         "report_type": "store_comparison",
         "date_range": date_range,
         "date_from": start_date,
         "date_to": end_date,
-        "total_stores": len(counter_data),
-        "average_visitors": round(avg_visitors, 1),
+        "total_stores": len(store_comparison),
         "average_entries": round(avg_in, 1),
+        "average_visitors": round(avg_in, 1),
+        "average_occupancy": round(avg_occ, 1),
         "top_performer": store_comparison[0] if store_comparison else None,
-        "bottom_performer": store_comparison[-1] if store_comparison else None,
+        "bottom_performer": store_comparison[-1] if len(store_comparison) > 1 else None,
         "stores": store_comparison,
         "data_source": "local_warehouse"
     }

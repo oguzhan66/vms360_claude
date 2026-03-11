@@ -392,23 +392,23 @@ const AdvancedReportsPage = () => {
             {/* Store Comparison Section */}
             {activeSection === 'comparison' && storeComparison && (
               <div className="space-y-6">
-                {/* Summary */}
+                {/* Summary Cards */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div className="stat-card">
                     <div className="stat-label">Toplam Mağaza</div>
                     <div className="stat-value">{storeComparison.total_stores}</div>
                   </div>
                   <div className="stat-card">
-                    <div className="stat-label">Ortalama Ziyaretçi</div>
-                    <div className="stat-value">{storeComparison.average_visitors}</div>
+                    <div className="stat-label">Ort. Giriş</div>
+                    <div className="stat-value">{storeComparison.average_entries?.toLocaleString()}</div>
                   </div>
                   <div className="stat-card">
                     <div className="stat-label">Ortalama Doluluk</div>
-                    <div className="stat-value">%{storeComparison.average_occupancy}</div>
+                    <div className="stat-value">%{storeComparison.average_occupancy ?? 0}</div>
                   </div>
                   <div className="stat-card">
-                    <div className="stat-label">Ort. Giriş</div>
-                    <div className="stat-value">{storeComparison.average_entries?.toLocaleString()}</div>
+                    <div className="stat-label">Analiz Süresi</div>
+                    <div className="stat-value text-sm">{storeComparison.date_from} → {storeComparison.date_to}</div>
                   </div>
                 </div>
 
@@ -416,22 +416,30 @@ const AdvancedReportsPage = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {storeComparison.top_performer && (
                     <div className="chart-container border-emerald-500/30">
-                      <div className="chart-title text-emerald-500">🏆 En İyi Performans</div>
+                      <div className="chart-title text-emerald-500">En İyi Performans</div>
                       <div className="p-4">
                         <h3 className="text-lg font-bold">{storeComparison.top_performer.store_name}</h3>
-                        <p className="text-sm text-muted-foreground">{storeComparison.top_performer.city}, {storeComparison.top_performer.district}</p>
-                        <div className="grid grid-cols-3 gap-4 mt-4">
+                        <p className="text-sm text-muted-foreground">
+                          {[storeComparison.top_performer.city, storeComparison.top_performer.district].filter(Boolean).join(', ') || '—'}
+                        </p>
+                        <div className="grid grid-cols-4 gap-3 mt-4">
                           <div>
-                            <div className="text-xs text-muted-foreground">Ziyaretçi</div>
-                            <div className="text-xl font-mono font-bold text-emerald-500">{storeComparison.top_performer.current_visitors}</div>
+                            <div className="text-xs text-muted-foreground">Toplam Giriş</div>
+                            <div className="text-xl font-mono font-bold text-emerald-500">{storeComparison.top_performer.total_in?.toLocaleString()}</div>
                           </div>
                           <div>
                             <div className="text-xs text-muted-foreground">Doluluk</div>
                             <div className="text-xl font-mono font-bold">%{storeComparison.top_performer.occupancy_percent}</div>
                           </div>
                           <div>
+                            <div className="text-xs text-muted-foreground">Ort. Kuyruk</div>
+                            <div className="text-xl font-mono font-bold">{storeComparison.top_performer.avg_queue_length}</div>
+                          </div>
+                          <div>
                             <div className="text-xs text-muted-foreground">Ort. Fark</div>
-                            <div className="text-xl font-mono font-bold text-emerald-500">+%{storeComparison.top_performer.deviation_percent}</div>
+                            <div className="text-xl font-mono font-bold text-emerald-500">
+                              {storeComparison.top_performer.deviation_percent >= 0 ? '+' : ''}{storeComparison.top_performer.deviation_percent}%
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -439,18 +447,24 @@ const AdvancedReportsPage = () => {
                   )}
                   {storeComparison.bottom_performer && storeComparison.stores?.length > 1 && (
                     <div className="chart-container border-amber-500/30">
-                      <div className="chart-title text-amber-500">⚠️ Geliştirilmeli</div>
+                      <div className="chart-title text-amber-500">Geliştirilmeli</div>
                       <div className="p-4">
                         <h3 className="text-lg font-bold">{storeComparison.bottom_performer.store_name}</h3>
-                        <p className="text-sm text-muted-foreground">{storeComparison.bottom_performer.city}, {storeComparison.bottom_performer.district}</p>
-                        <div className="grid grid-cols-3 gap-4 mt-4">
+                        <p className="text-sm text-muted-foreground">
+                          {[storeComparison.bottom_performer.city, storeComparison.bottom_performer.district].filter(Boolean).join(', ') || '—'}
+                        </p>
+                        <div className="grid grid-cols-4 gap-3 mt-4">
                           <div>
-                            <div className="text-xs text-muted-foreground">Ziyaretçi</div>
-                            <div className="text-xl font-mono font-bold text-amber-500">{storeComparison.bottom_performer.current_visitors}</div>
+                            <div className="text-xs text-muted-foreground">Toplam Giriş</div>
+                            <div className="text-xl font-mono font-bold text-amber-500">{storeComparison.bottom_performer.total_in?.toLocaleString()}</div>
                           </div>
                           <div>
                             <div className="text-xs text-muted-foreground">Doluluk</div>
                             <div className="text-xl font-mono font-bold">%{storeComparison.bottom_performer.occupancy_percent}</div>
+                          </div>
+                          <div>
+                            <div className="text-xs text-muted-foreground">Ort. Kuyruk</div>
+                            <div className="text-xl font-mono font-bold">{storeComparison.bottom_performer.avg_queue_length}</div>
                           </div>
                           <div>
                             <div className="text-xs text-muted-foreground">Ort. Fark</div>
@@ -462,15 +476,44 @@ const AdvancedReportsPage = () => {
                   )}
                 </div>
 
-                {/* Store Comparison Chart */}
-                <div className="chart-container">
-                  <div className="chart-title">Mağaza Karşılaştırması</div>
-                  {renderChart(
-                    storeComparison.stores?.map(s => ({ name: s.store_name?.substring(0, 12), visitors: s.current_visitors })),
-                    'visitors', 
-                    'name', 
-                    'Ziyaretçi Sayısı'
-                  )}
+                {/* Charts Row: Giriş + Doluluk */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="chart-container">
+                    <div className="chart-title">Toplam Giriş Karşılaştırması</div>
+                    {renderChart(
+                      storeComparison.stores?.map(s => ({ name: s.store_name?.substring(0, 14), value: s.total_in })),
+                      'value', 'name', 'Toplam Giriş'
+                    )}
+                  </div>
+                  <div className="chart-container">
+                    <div className="chart-title">Doluluk Oranı Karşılaştırması (%)</div>
+                    {renderChart(
+                      storeComparison.stores?.map(s => ({ name: s.store_name?.substring(0, 14), value: s.occupancy_percent })),
+                      'value', 'name', 'Doluluk %'
+                    )}
+                  </div>
+                </div>
+
+                {/* Charts Row: Kuyruk + Demografik */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="chart-container">
+                    <div className="chart-title">Ortalama Kuyruk Uzunluğu</div>
+                    {renderChart(
+                      storeComparison.stores?.map(s => ({ name: s.store_name?.substring(0, 14), value: s.avg_queue_length })),
+                      'value', 'name', 'Ort. Kuyruk'
+                    )}
+                  </div>
+                  <div className="chart-container">
+                    <div className="chart-title">Cinsiyet Dağılımı (Toplam)</div>
+                    {renderChart(
+                      storeComparison.stores?.map(s => ({
+                        name: s.store_name?.substring(0, 14),
+                        Erkek: s.male_count,
+                        Kadın: s.female_count,
+                      })),
+                      'Erkek', 'name', 'Cinsiyet'
+                    )}
+                  </div>
                 </div>
 
                 {/* Detailed Table */}
@@ -482,10 +525,12 @@ const AdvancedReportsPage = () => {
                         <tr>
                           <th>Mağaza</th>
                           <th>Konum</th>
-                          <th>Ziyaretçi</th>
-                          <th>Giriş</th>
-                          <th>Çıkış</th>
+                          <th>Toplam Giriş</th>
+                          <th>Toplam Çıkış</th>
                           <th>Doluluk</th>
+                          <th>Ort. Kuyruk</th>
+                          <th>Erkek</th>
+                          <th>Kadın</th>
                           <th>Performans</th>
                         </tr>
                       </thead>
@@ -493,16 +538,24 @@ const AdvancedReportsPage = () => {
                         {storeComparison.stores?.map((store) => (
                           <tr key={store.store_id}>
                             <td className="font-medium">{store.store_name}</td>
-                            <td className="text-muted-foreground">{store.city}, {store.district}</td>
-                            <td className="font-mono font-bold">{store.current_visitors}</td>
-                            <td className="font-mono text-emerald-500">{store.total_in}</td>
-                            <td className="font-mono text-amber-500">{store.total_out}</td>
+                            <td className="text-muted-foreground">
+                              {[store.city, store.district].filter(Boolean).join(', ') || '—'}
+                            </td>
+                            <td className="font-mono text-emerald-500">{store.total_in?.toLocaleString()}</td>
+                            <td className="font-mono text-amber-500">{store.total_out?.toLocaleString()}</td>
                             <td className="font-mono">%{store.occupancy_percent}</td>
+                            <td className="font-mono">{store.avg_queue_length}</td>
+                            <td className="font-mono text-blue-400">
+                              {store.male_count} <span className="text-xs text-muted-foreground">(%{store.male_percent})</span>
+                            </td>
+                            <td className="font-mono text-pink-400">
+                              {store.female_count} <span className="text-xs text-muted-foreground">(%{store.female_percent})</span>
+                            </td>
                             <td>
-                              <span className={`inline-flex px-2 py-0.5 text-xs ${
+                              <span className={`inline-flex px-2 py-0.5 text-xs rounded ${
                                 store.performance === 'above' ? 'bg-emerald-500/20 text-emerald-500' : 'bg-amber-500/20 text-amber-500'
                               }`}>
-                                {store.performance === 'above' ? `+${store.deviation_percent}%` : `${store.deviation_percent}%`}
+                                {store.deviation_percent >= 0 ? '+' : ''}{store.deviation_percent}%
                               </span>
                             </td>
                           </tr>
