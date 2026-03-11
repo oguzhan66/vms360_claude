@@ -418,49 +418,34 @@ async def get_counter_report(
                 "status": "normal"
             })
     else:
-        # For historical data, ALWAYS use counter_snapshots (more reliable)
-        # Get last snapshot of each day per store
-        pipeline = [
-            {"$match": query},
-            {"$sort": {"hour": -1, "minute": -1}},
-            {"$group": {
-                "_id": {"store_id": "$store_id", "date": "$date"},
-                "total_in": {"$max": "$total_in"},
-                "total_out": {"$max": "$total_out"},
-                "current_visitors": {"$last": "$current_visitors"},
-                "store_name": {"$first": "$store_name"},
-                "store_id": {"$first": "$store_id"}
-            }},
-            
-            {"$project": {"_id": 0}}
-        ]
-        snapshots = await db.counter_snapshots.aggregate(pipeline).to_list(10000)
-        
-        # Aggregate by store across all days
+        # Use daily_reports collection (from VMS report API)
+        dr_query = {"date": {"$gte": start_date, "$lte": end_date}}
+        if filtered_ids:
+            dr_query["store_id"] = {"$in": filtered_ids}
+        daily_docs = await db.daily_reports.find(dr_query, {"_id": 0}).to_list(10000)
         store_data = {}
-        for snap in snapshots:
-            sid = snap["_id"]["store_id"] if isinstance(snap.get("_id"), dict) else snap.get("store_id", snap.get("_id", {}).get("store_id", ""))
-            # Skip deleted stores
-            if sid not in active_store_ids:
+        for doc in daily_docs:
+            sid = doc.get("store_id")
+            if not sid or sid not in active_store_ids:
                 continue
             if sid not in store_data:
                 store_data[sid] = {
                     "store_id": sid,
-                    "store_name": active_store_names.get(sid, snap.get("store_name", "Bilinmiyor")),
+                    "store_name": active_store_names.get(sid, doc.get("store_name", "Bilinmiyor")),
                     "total_in": 0,
                     "total_out": 0,
                     "max_visitors": 0,
                     "days": 0
                 }
-            # Sum each day's final values (VMS resets daily)
-            store_data[sid]["total_in"] += snap.get("total_in", 0)
-            store_data[sid]["total_out"] += snap.get("total_out", 0)
-            store_data[sid]["max_visitors"] = max(store_data[sid]["max_visitors"], snap.get("current_visitors", 0))
+            counter = doc.get("counter", {})
+            store_data[sid]["total_in"] += counter.get("total_in", 0)
+            store_data[sid]["total_out"] += counter.get("total_out", 0)
             store_data[sid]["days"] += 1
-        
         stores = list(store_data.values())
         for s in stores:
             s["current_visitors"] = max(0, s["total_in"] - s["total_out"])
+            s["avg_daily_visitors"] = round(s["total_in"] / s["days"], 1) if s["days"] > 0 else 0
+            s["status"] = "normal"
             s["avg_daily_visitors"] = round(s["total_in"] / s["days"], 1) if s["days"] > 0 else 0
             s["status"] = "normal"
     
