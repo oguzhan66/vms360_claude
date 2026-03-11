@@ -673,6 +673,14 @@ async def init_scheduler():
         id='check_store_health',
         replace_existing=True
     )
+    # Job 8: Daily VMS report collection at 02:00
+    from data_collector import collect_daily_vms_report
+    scheduler.add_job(
+        collect_daily_vms_report,
+        CronTrigger(hour='2', minute='0'),
+        id='collect_daily_vms_report',
+        replace_existing=True
+    )
     
     scheduler.start()
     logger.info("Scheduler started:")
@@ -2066,21 +2074,21 @@ async def sync_all_cameras_from_vms(vms_id: str):
     counter_data = await fetch_vms_data(server, "/rsapi/modules/counter/getstats")
     if counter_data:
         parsed = parse_counter_xml(counter_data)
-        for cam in parsed:
+        for cam in parsed.get("cameras", []):
             counter_cameras.add(cam.get('camera_id'))
     
     # Check queue module
     queue_data = await fetch_vms_data(server, "/rsapi/modules/queue/getstats")
     if queue_data:
         parsed = parse_queue_xml(queue_data)
-        for cam in parsed:
+        for cam in parsed.get("cameras", []):
             queue_cameras.add(cam.get('camera_id'))
     
     # Check analytics module
     analytics_data = await fetch_vms_data(server, "/rsapi/modules/fr/analytics/getstats")
     if analytics_data:
         parsed = parse_counter_xml(analytics_data)
-        for cam in parsed:
+        for cam in parsed.get("cameras", []):
             analytics_cameras.add(cam.get('camera_id'))
     
     # Get existing cameras in database
@@ -3042,12 +3050,16 @@ async def get_counter_report(
             # No hour filter: Get the LAST snapshot of each day for each store (cumulative value at end of day)
             pipeline = [
                 {"$match": query},
-                {"$sort": {"hour": -1, "minute": -1}},  # Sort by time descending
+                {"$sort": {"date": -1, "hour": -1, "minute": -1}},  # Sort by time descending
                 {"$group": {
                     "_id": {"store_id": "$store_id", "date": "$date"},
-                    "latest": {"$first": "$$ROOT"}
+                    "total_in": {"$max": "$total_in"},
+                    "total_out": {"$max": "$total_out"},
+                    "current_visitors": {"$last": "$current_visitors"},
+                    "store_name": {"$first": "$store_name"},
+                    "store_id": {"$first": "$store_id"},
+                    "date": {"$first": "$date"}
                 }},
-                {"$replaceRoot": {"newRoot": "$latest"}},
                 {"$project": {"_id": 0}}
             ]
             snapshots = await db.counter_snapshots.aggregate(pipeline).to_list(10000)
@@ -3057,7 +3069,7 @@ async def get_counter_report(
             # Aggregate by store across all days
             store_data = {}
             for snap in snapshots:
-                sid = snap["store_id"]
+                sid = snap.get("store_id") or snap.get("_id", {}).get("store_id") if isinstance(snap.get("_id"), dict) else snap.get("store_id")
                 if sid not in store_data:
                     store = stores_map.get(sid, {})
                     store_data[sid] = {
@@ -5492,3 +5504,4 @@ app.add_middleware(
 async def shutdown_db_client():
     scheduler.shutdown()
     client.close()
+
