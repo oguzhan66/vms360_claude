@@ -567,6 +567,8 @@ async def get_queue_report(
 async def get_hourly_traffic_report(
     store_ids: Optional[str] = None,
     date_range: str = "1d",
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
     user: dict = Depends(require_auth)
 ):
     """Get hourly traffic pattern from local database"""
@@ -647,6 +649,8 @@ async def get_hourly_traffic_report(
 async def get_store_comparison(
     store_ids: Optional[str] = None,
     date_range: str = "1d",
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
     user: dict = Depends(require_auth)
 ):
     """Compare performance between stores from local database"""
@@ -678,22 +682,13 @@ async def get_store_comparison(
     if filtered_ids:
         query["store_id"] = {"$in": filtered_ids}
     
-    # Get last snapshot of each day per store for the date range
-    pipeline = [
-        {"$match": query},
-        {"$sort": {"hour": -1, "minute": -1}},
-        {"$group": {
-            "_id": {"store_id": "$store_id", "date": "$date"},
-            "total_in": {"$max": "$total_in"}, "total_out": {"$max": "$total_out"}, "store_name": {"$first": "$store_name"}
-        }},
-        
-        {"$project": {"_id": 0}}
-    ]
-    snapshots = await db.counter_snapshots.aggregate(pipeline).to_list(10000)
-    
-    logger.info(f"Store comparison: Found {len(snapshots)} daily snapshots")
-    
-    if not snapshots:
+   # Get data from daily_reports
+    dr_query = {"date": {"$gte": start_date, "$lte": end_date}}
+    if filtered_ids:
+        dr_query["store_id"] = {"$in": filtered_ids}
+    daily_docs = await db.daily_reports.find(dr_query, {"_id": 0}).to_list(10000)
+    logger.info(f"Store comparison: Found {len(daily_docs)} daily reports")
+    if not daily_docs:
         return {
             "report_type": "store_comparison",
             "date_range": date_range,
@@ -703,23 +698,24 @@ async def get_store_comparison(
             "stores": [],
             "data_source": "local_warehouse"
         }
-    
     # Aggregate by store
     store_data = {}
-    for snap in snapshots:
-        sid = snap["store_id"]
+    for doc in daily_docs:
+        sid = doc.get("store_id")
+        if not sid:
+            continue
+        counter = doc.get("counter", {})
         if sid not in store_data:
             store_data[sid] = {
                 "store_id": sid,
-                "store_name": snap.get("store_name", "Bilinmiyor"),
+                "store_name": doc.get("store_name", "Bilinmiyor"),
                 "total_in": 0,
                 "total_out": 0,
                 "max_visitors": 0,
                 "days": 0
             }
-        store_data[sid]["total_in"] += snap.get("total_in", 0)
-        store_data[sid]["total_out"] += snap.get("total_out", 0)
-        store_data[sid]["max_visitors"] = max(store_data[sid]["max_visitors"], snap.get("current_visitors", 0))
+        store_data[sid]["total_in"] += counter.get("total_in", 0)
+        store_data[sid]["total_out"] += counter.get("total_out", 0)
         store_data[sid]["days"] += 1
     
     counter_data = list(store_data.values())
