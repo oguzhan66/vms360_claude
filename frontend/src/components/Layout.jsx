@@ -1,11 +1,12 @@
+import { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { 
-  LayoutDashboard, 
-  Users, 
-  ListOrdered, 
-  BarChart3, 
-  Server, 
-  Store, 
+import {
+  LayoutDashboard,
+  Users,
+  ListOrdered,
+  BarChart3,
+  Server,
+  Store,
   Settings,
   Cctv,
   FileText,
@@ -17,7 +18,9 @@ import {
   CalendarClock,
   Activity,
   Layers,
-  ThermometerSun
+  ThermometerSun,
+  Menu,
+  X
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
@@ -47,21 +50,29 @@ export const Layout = ({ children }) => {
   const { theme, toggleTheme } = useTheme();
   const { user, logout, isAdmin } = useAuth();
   const navigate = useNavigate();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const handleLogout = () => {
     logout();
     navigate('/login');
   };
 
+  const closeSidebar = () => setSidebarOpen(false);
+
   // Filter nav items based on user role
-  const navItems = allNavItems.filter(item => 
+  const navItems = allNavItems.filter(item =>
     item.roles.includes(user?.role || 'operator')
   );
 
   return (
     <div className="app-container">
+      {/* Mobile overlay */}
+      {sidebarOpen && (
+        <div className="sidebar-overlay" onClick={closeSidebar} />
+      )}
+
       {/* Sidebar */}
-      <aside className="sidebar" data-testid="sidebar">
+      <aside className={`sidebar${sidebarOpen ? ' sidebar-open' : ''}`} data-testid="sidebar">
         <div className="sidebar-header relative">
           {/* Theme Toggle - Top Right */}
           <Button
@@ -116,6 +127,7 @@ export const Layout = ({ children }) => {
             <NavLink
               key={item.path}
               to={item.path}
+              onClick={closeSidebar}
               className={({ isActive }) =>
                 `nav-item ${isActive ? 'active' : ''}`
               }
@@ -149,6 +161,14 @@ export const Layout = ({ children }) => {
 
       {/* Main Content */}
       <main className="main-content">
+        {/* Mobile hamburger button */}
+        <button
+          className="mobile-menu-btn"
+          onClick={() => setSidebarOpen(true)}
+          aria-label="Menüyü aç"
+        >
+          <Menu className="w-5 h-5" />
+        </button>
         {children}
       </main>
     </div>

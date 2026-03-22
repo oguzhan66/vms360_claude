@@ -275,33 +275,116 @@
     }
 }
 
+/* Mobile menu button - hidden on desktop */
+.mobile-menu-btn {
+    display: none;
+}
+
 /* Responsive */
 @media (max-width: 1024px) {
     .sidebar {
         width: 72px;
     }
-    
+
     .sidebar-header span,
     .nav-item span {
         display: none;
     }
-    
+
     .nav-item {
         justify-content: center;
         padding: 1rem;
     }
-    
+
     .main-content {
         margin-left: 72px;
     }
 }
 
 @media (max-width: 640px) {
+    /* Sidebar: off-screen by default, slides in when open */
     .sidebar {
-        display: none;
+        transform: translateX(-260px);
+        width: 260px;
+        transition: transform 0.25s ease;
+        z-index: 60;
     }
-    
+
+    .sidebar.sidebar-open {
+        transform: translateX(0);
+    }
+
+    /* Restore hidden text labels on mobile open state */
+    .sidebar.sidebar-open .sidebar-header span,
+    .sidebar.sidebar-open .nav-item span {
+        display: inline;
+    }
+
+    .sidebar.sidebar-open .nav-item {
+        justify-content: flex-start;
+        padding: 0.875rem 1.5rem;
+    }
+
+    /* Dark overlay behind open sidebar */
+    .sidebar-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 55;
+    }
+
+    /* Hamburger button */
+    .mobile-menu-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: fixed;
+        top: 0.75rem;
+        left: 0.75rem;
+        z-index: 50;
+        width: 2.25rem;
+        height: 2.25rem;
+        background: hsl(var(--card));
+        border: 1px solid hsl(var(--border));
+        border-radius: 0.375rem;
+        cursor: pointer;
+        color: hsl(var(--foreground));
+    }
+
     .main-content {
         margin-left: 0;
+    }
+
+    /* Push page header down so it clears the hamburger button */
+    .page-header {
+        padding: 0.75rem 1rem 0.75rem 3.5rem;
+    }
+
+    .page-content {
+        padding: 1rem;
+    }
+
+    /* Tables: horizontal scroll instead of overflow */
+    .data-table {
+        display: block;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        white-space: nowrap;
+    }
+
+    /* Stat values: slightly smaller on very small screens */
+    .stat-value {
+        font-size: 1.35rem;
+    }
+
+    /* Filter bar: stack filters vertically */
+    .filter-bar {
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+
+    /* Charts: reduce padding */
+    .chart-container {
+        padding: 0.875rem;
     }
 }
