@@ -1,80 +1,143 @@
-# VMS360 Retail Panel - Lokal Kurulum Rehberi
+# VMS360 Retail Panel - Kurulum ve Kullanım Rehberi
 
 ## İçindekiler
 1. [Gereksinimler](#gereksinimler)
-2. [Hızlı Başlangıç](#hızlı-başlangıç)
-3. [Manuel Kurulum](#manuel-kurulum)
-4. [Servis Modu Kurulumu](#servis-modu-kurulumu)
-5. [Docker Kurulumu](#docker-kurulumu)
+2. [Hızlı Başlangıç (Docker)](#hızlı-başlangıç-docker)
+3. [Otomatik Başlangıç Kurulumu](#otomatik-başlangıç-kurulumu)
+4. [Servis Yönetimi](#servis-yönetimi)
+5. [Manuel Kurulum](#manuel-kurulum)
 6. [Sorun Giderme](#sorun-giderme)
+7. [Güvenlik Kontrol Listesi](#güvenlik-kontrol-listesi)
 
 ---
 
 ## Gereksinimler
 
-### Yazılım Gereksinimleri
-- **Python 3.10+** 
-- **Node.js 18+** ve **Yarn**
-- **MongoDB 6.0+** (local veya cloud)
-- **Git**
-
-### Sistem Gereksinimleri
+- **Docker Desktop** (Windows) — [indir](https://www.docker.com/products/docker-desktop/)
 - RAM: Minimum 4GB
-- Disk: 2GB boş alan
+- Disk: 5GB boş alan
+
+> Docker Desktop kuruluysa başka bir şey gerekmez. Python, Node.js, MongoDB kurmanıza gerek yok.
 
 ---
 
-## 1. Projeyi İndirme
+## Hızlı Başlangıç (Docker)
 
 ```bash
 # Projeyi klonlayın
-git clone <repo-url> vms360-retail-panel
-cd vms360-retail-panel
+git clone https://github.com/oguzhan66/vms360_claude.git
+cd vms360_claude
+
+# Servisleri başlatın
+docker compose up -d
+```
+
+Tarayıcıda açın: **http://localhost:3001**
+
+| Rol | Kullanıcı Adı | Şifre |
+|-----|---------------|-------|
+| Admin | admin | 12345 |
+| Operatör | operator | 12345 |
+
+> ⚠️ Production ortamında şifreleri değiştirin!
+
+---
+
+## Otomatik Başlangıç Kurulumu
+
+PC açıldığında VMS360'ın otomatik başlaması için aşağıdaki adımları uygulayın.
+
+### 1. Docker Desktop'ı Otomatik Başlatma
+
+Docker Desktop sistem tepsisine sağ tıklayın → **Settings** → **General** → **Start Docker Desktop when you log in** seçeneğini işaretleyin.
+
+### 2. VMS360'ı Otomatik Başlatma
+
+Windows Başlangıç klasörüne kısayol eklenmiştir. Kurulum sırasında bu işlem zaten yapılmıştır:
+
+```
+C:\Users\<kullanıcı>\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\VMS360.lnk
+```
+
+Bu kısayol oturum açıldığında `start-vms360.bat` scriptini çalıştırır. Script, Docker hazır olana kadar bekler ve ardından `docker compose up -d` komutunu çalıştırır.
+
+**Manuel kurulum gerekirse:**
+```bash
+# start-vms360.bat dosyasına kısayol oluşturun ve Başlangıç klasörüne koyun
+# Başlangıç klasörünü açmak için: Win+R → shell:startup
 ```
 
 ---
 
-## 2. MongoDB Kurulumu
+## Servis Yönetimi
 
-### Seçenek A: Lokal MongoDB
+### Masaüstü Kısayolu ile Restart
 
-**Windows:**
-1. https://www.mongodb.com/try/download/community adresinden indirin
-2. Kurulumu tamamlayın
-3. MongoDB Compass ile bağlantıyı test edin
+Masaüstündeki **"VMS360 Restart"** kısayoluna çift tıklayın.
+Servisler otomatik olarak durdurulup yeniden başlatılır.
 
-**macOS:**
+### Komut Satırı ile Yönetim
+
 ```bash
-brew tap mongodb/brew
-brew install mongodb-community
-brew services start mongodb-community
+# Başlat
+docker compose up -d
+
+# Durdur
+docker compose down
+
+# Yeniden başlat
+docker compose restart
+
+# Durum görüntüle
+docker compose ps
+
+# Logları izle
+docker compose logs -f
+
+# Sadece backend logları
+docker compose logs -f backend
 ```
 
-**Ubuntu/Debian:**
-```bash
-sudo apt update
-sudo apt install -y mongodb
-sudo systemctl start mongodb
-sudo systemctl enable mongodb
-```
+### Hazır Scriptler
 
-### Seçenek B: MongoDB Atlas (Cloud - Ücretsiz)
-1. https://cloud.mongodb.com adresine gidin
-2. Ücretsiz cluster oluşturun
-3. Connection string'i alın: `mongodb+srv://user:pass@cluster.mongodb.net/vms360`
+| Script | Açıklama |
+|--------|----------|
+| `start-vms360.bat` | Docker hazır olunca servisleri başlatır (otomatik başlangıç için) |
+| `restart-vms360.bat` | Servisleri durdurur ve yeniden başlatır |
+| `setup-autostart.bat` | Otomatik başlangıç kurulumunu yapar (yönetici gerektirir) |
 
 ---
 
-## 3. Backend Kurulumu
+## Servis Adresleri
+
+| Servis | Adres |
+|--------|-------|
+| Frontend (Panel) | http://localhost:3001 |
+| Backend API | http://localhost:8001 |
+| API Dokümantasyon | http://localhost:8001/docs |
+| MongoDB | localhost:27017 |
+
+---
+
+## Manuel Kurulum
+
+Docker kullanmak istemiyorsanız aşağıdaki adımları izleyin.
+
+### Gereksinimler
+
+- Python 3.10+
+- Node.js 18+ ve Yarn
+- MongoDB 6.0+
+
+### Backend
 
 ```bash
-# Backend klasörüne gidin
 cd backend
 
 # Virtual environment oluşturun
 python -m venv venv
 
-# Virtual environment'ı aktifleyin
+# Aktifleştirin
 # Windows:
 venv\Scripts\activate
 # macOS/Linux:
@@ -83,376 +146,72 @@ source venv/bin/activate
 # Bağımlılıkları yükleyin
 pip install -r requirements.txt
 
-# .env dosyasını oluşturun
+# .env dosyası oluşturun
 cp .env.example .env
-```
+# MONGO_URL ve JWT_SECRET_KEY düzenleyin
 
-### Backend .env Dosyası
-```env
-# MongoDB Bağlantısı
-MONGO_URL=mongodb://localhost:27017
-DB_NAME=vms360
-
-# JWT Ayarları (değiştirin!)
-JWT_SECRET_KEY=your-super-secret-key-change-this-in-production
-
-# Uygulama Ayarları
-DEBUG=true
-```
-
-### Türkiye Konum Verilerini Yükleme
-```bash
-# Seed script'ini çalıştırın
+# Türkiye konum verilerini yükleyin
 python seed_locations.py
-```
 
-### Backend'i Başlatma
-```bash
-# Development modunda çalıştırma
+# Başlatın
 uvicorn server:app --host 0.0.0.0 --port 8001 --reload
 ```
 
-Backend şu adreste çalışacak: `http://localhost:8001`
-
-API Docs: `http://localhost:8001/docs`
-
----
-
-## 4. Frontend Kurulumu
+### Frontend
 
 ```bash
-# Yeni terminal açın
 cd frontend
 
-# Bağımlılıkları yükleyin
 yarn install
-
-# .env dosyasını oluşturun
 cp .env.example .env
-```
+# REACT_APP_BACKEND_URL=http://localhost:8001
 
-### Frontend .env Dosyası
-```env
-REACT_APP_BACKEND_URL=http://localhost:8001
-```
-
-### Frontend'i Başlatma
-```bash
 yarn start
 ```
 
-Frontend şu adreste çalışacak: `http://localhost:3000`
-
 ---
 
-## 5. Varsayılan Kullanıcılar
+## Sorun Giderme
 
-Uygulama ilk çalıştığında otomatik olarak oluşturulur:
-
-| Rol | Kullanıcı Adı | Şifre |
-|-----|---------------|-------|
-| Admin | admin | 12345 |
-| Operatör | operator | 12345 |
-
-⚠️ **ÖNEMLİ:** Production ortamında şifreleri değiştirin!
-
----
-
-## 6. VMS Sunucusu Ekleme
-
-1. Admin olarak giriş yapın
-2. **VMS Yönetimi** sayfasına gidin
-3. **+ Yeni VMS** butonuna tıklayın
-4. VMS bilgilerini girin:
-   - URL: `http://213.14.158.166:11012` (test sunucusu)
-   - Kullanıcı: `admin`
-   - Şifre: (boş bırakın)
-5. **Bağlantıyı Test Et** butonuna tıklayın
-6. Kaydedin
-
----
-
-## 7. Servis Modu Kurulumu (Önerilen)
-
-Uygulama sistem servisi olarak çalışır, bilgisayar açıldığında otomatik başlar.
-
-### Linux (Ubuntu/Debian) - Systemd
+### Servisler Başlamıyor
 
 ```bash
-# 1. Kurulum scriptini çalıştırın
-cd services
-sudo bash install-service.sh
+# Container durumunu kontrol edin
+docker compose ps
 
-# 2. Servisleri başlatın
-sudo systemctl start vms360-backend
-sudo systemctl start vms360-frontend
-
-# 3. Durumu kontrol edin
-sudo systemctl status vms360-backend
-sudo systemctl status vms360-frontend
+# Logları inceleyin
+docker compose logs backend
+docker compose logs frontend
 ```
 
-**Servis Yönetim Komutları:**
+### Tarayıcıda Açılmıyor
+
 ```bash
-# Yönetim scripti ile
-./vms360-ctl.sh start    # Başlat
-./vms360-ctl.sh stop     # Durdur
-./vms360-ctl.sh restart  # Yeniden başlat
-./vms360-ctl.sh status   # Durum
-./vms360-ctl.sh logs     # Canlı loglar
-
-# Veya systemctl ile
-sudo systemctl start vms360-backend
-sudo systemctl stop vms360-backend
-sudo systemctl restart vms360-backend
-sudo systemctl enable vms360-backend   # Başlangıçta otomatik çalıştır
-sudo systemctl disable vms360-backend  # Otomatik başlatmayı kapat
-```
-
-**Dizin Yapısı (Kurulumdan Sonra):**
-```
-/opt/vms360/
-├── backend/         # Backend uygulama
-├── frontend/build/  # Frontend (derlenmiş)
-└── nginx/           # Nginx yapılandırması
-
-/var/log/vms360/
-├── backend.log      # Backend logları
-├── backend-error.log
-├── nginx-access.log
-└── nginx-error.log
-```
-
-### Windows - NSSM ile
-
-Windows'ta NSSM (Non-Sucking Service Manager) kullanılır.
-
-**Ön Gereksinimler:**
-1. NSSM'i indirin: https://nssm.cc/download
-2. nssm.exe'yi `C:\Windows\System32` klasörüne kopyalayın
-
-```batch
-REM 1. Kurulum scriptini yönetici olarak çalıştırın
-cd services
-install-windows.bat
-
-REM 2. Servisleri başlatın
-net start VMS360-Backend
-net start VMS360-Frontend
-
-REM 3. Veya yönetim scripti ile
-vms360-ctl.bat start
-vms360-ctl.bat status
-```
-
-**Windows Hizmetleri:**
-- `services.msc` ile servis yönetimi yapılabilir
-- VMS360-Backend ve VMS360-Frontend servisleri görünecek
-
----
-
-## 8. Docker Kurulumu
-
-### Docker Compose ile (En Kolay)
-
-**docker-compose.yml:**
-```yaml
-version: '3.8'
-
-services:
-  mongodb:
-    image: mongo:6.0
-    container_name: vms360-mongodb
-    restart: always
-    volumes:
-      - mongodb_data:/data/db
-    ports:
-      - "27017:27017"
-
-  backend:
-    build: ./backend
-    container_name: vms360-backend
-    restart: always
-    depends_on:
-      - mongodb
-    environment:
-      - MONGO_URL=mongodb://mongodb:27017
-      - DB_NAME=vms360
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
-    ports:
-      - "8001:8001"
-
-  frontend:
-    build: ./frontend
-    container_name: vms360-frontend
-    restart: always
-    depends_on:
-      - backend
-    environment:
-      - REACT_APP_BACKEND_URL=http://localhost:8001
-    ports:
-      - "3000:3000"
-
-volumes:
-  mongodb_data:
-```
-
-**Çalıştırma:**
-```bash
-# JWT secret oluşturun
-export JWT_SECRET_KEY=$(openssl rand -hex 32)
-
-# Docker compose ile başlatın
-docker-compose up -d
-```
-
-### Backend Dockerfile
-```dockerfile
-FROM python:3.11-slim
-
-WORKDIR /app
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-
-# Seed locations on first run
-RUN python seed_locations.py || true
-
-EXPOSE 8001
-
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8001"]
-```
-
-### Frontend Dockerfile
-```dockerfile
-FROM node:18-alpine as build
-
-WORKDIR /app
-
-COPY package.json yarn.lock ./
-RUN yarn install --frozen-lockfile
-
-COPY . .
-RUN yarn build
-
-FROM nginx:alpine
-COPY --from=build /app/build /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-
-EXPOSE 3000
-
-CMD ["nginx", "-g", "daemon off;"]
-```
-
-### Frontend nginx.conf
-```nginx
-server {
-    listen 3000;
-    server_name localhost;
-    
-    root /usr/share/nginx/html;
-    index index.html;
-    
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-    
-    location /api {
-        proxy_pass http://backend:8001;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_cache_bypass $http_upgrade;
-    }
-}
-```
-
----
-
-## 8. Sorun Giderme
-
-### MongoDB Bağlantı Hatası
-```bash
-# MongoDB servisini kontrol edin
-sudo systemctl status mongodb
-
-# Log'ları kontrol edin
-sudo tail -f /var/log/mongodb/mongod.log
-```
-
-### Backend Başlamıyor
-```bash
-# Virtual environment aktif mi kontrol edin
-which python
-
-# Bağımlılıkları tekrar yükleyin
-pip install -r requirements.txt --force-reinstall
-```
-
-### Frontend Build Hatası
-```bash
-# Node modules'ı temizleyin
-rm -rf node_modules
-yarn install
-```
-
-### Port Çakışması
-```bash
-# Windows - port kullanan process'i bulun
+# Port çakışması kontrolü
+netstat -ano | findstr :3001
 netstat -ano | findstr :8001
+```
 
-# macOS/Linux
-lsof -i :8001
-kill -9 <PID>
+### Docker Desktop Hazır Değil Hatası
+
+`start-vms360.bat` scripti Docker hazır olana kadar otomatik bekler. Docker Desktop açılmamışsa önce açın, ardından script çalışmaya devam eder.
+
+### Servisleri Sıfırdan Yeniden Oluşturma
+
+```bash
+# Container ve image'ları silip yeniden oluştur
+docker compose down
+docker compose up -d --build
 ```
 
 ---
 
-## 9. Güvenlik Kontrol Listesi
+## Güvenlik Kontrol Listesi
 
 Production'a geçmeden önce:
 
-- [ ] JWT_SECRET_KEY değiştirin (en az 32 karakter)
-- [ ] Admin/Operator şifrelerini değiştirin
-- [ ] MongoDB'yi şifre ile koruyun
+- [ ] `JWT_SECRET_KEY` değiştirin (en az 32 karakter)
+- [ ] Admin ve Operator şifrelerini değiştirin
+- [ ] MongoDB şifre korumasını aktifleştirin
 - [ ] HTTPS kullanın (nginx/caddy ile)
-- [ ] Firewall kuralları ayarlayın
-- [ ] DEBUG=false yapın
-
----
-
-## 10. Destek
-
-Sorularınız için:
-- GitHub Issues açın
-- Dokümantasyonu kontrol edin
-
----
-
-## Hızlı Başlangıç (Özet)
-
-```bash
-# 1. Klonla
-git clone <repo-url> && cd vms360-retail-panel
-
-# 2. Backend
-cd backend
-python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env  # MONGO_URL ve JWT_SECRET_KEY düzenle
-python seed_locations.py
-uvicorn server:app --host 0.0.0.0 --port 8001 --reload &
-
-# 3. Frontend (yeni terminal)
-cd frontend
-yarn install
-cp .env.example .env  # REACT_APP_BACKEND_URL=http://localhost:8001
-yarn start
-
-# 4. Tarayıcıda aç
-# http://localhost:3000
-# Giriş: admin / 12345
-```
+- [ ] Firewall kurallarını ayarlayın
