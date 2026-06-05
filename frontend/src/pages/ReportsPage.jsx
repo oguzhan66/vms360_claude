@@ -36,8 +36,10 @@ const ReportsPage = () => {
   const [dateTo, setDateTo] = useState('');
   const [filters, setFilters] = useState({});
   const [report, setReport] = useState(null);
+  const [dailyReport, setDailyReport] = useState(null);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [viewMode, setViewMode] = useState('summary'); // 'summary' | 'daily'
 
   const loadReport = async () => {
     setLoading(true);
@@ -58,6 +60,19 @@ const ReportsPage = () => {
         res = await reportApi.getAnalytics(params);
       }
       setReport(res.data);
+
+      // Günlük detay için ek veri (1d dışında)
+      if (dateRange !== '1d' && selectedType !== 'analytics') {
+        try {
+          const dailyParams = { ...params, group_by: 'day' };
+          const dailyRes = selectedType === 'counter'
+            ? await reportApi.getCounter({ ...dailyParams, date_range: dateRange })
+            : await reportApi.getQueue({ ...dailyParams, date_range: dateRange });
+          setDailyReport(dailyRes.data);
+        } catch {}
+      } else {
+        setDailyReport(null);
+      }
     } catch (e) {
       console.error('Failed to load report', e);
       toast.error('Rapor yüklenemedi');
@@ -213,8 +228,8 @@ const ReportsPage = () => {
           </div>
 
           <Select value={dateRange} onValueChange={setDateRange}>
-            <SelectTrigger className="w-36 bg-secondary/50 border-border" data-testid="date-range-select">
-              <SelectValue />
+            <SelectTrigger className="w-36 bg-secondary/50 border-border text-foreground" data-testid="date-range-select">
+              <SelectValue placeholder="Tarih seçin" />
             </SelectTrigger>
             <SelectContent>
               {DATE_RANGES.map((range) => (
@@ -269,6 +284,27 @@ const ReportsPage = () => {
           showRefresh={false}
           showStoreFilter={true}
         />
+
+        {/* Görünüm Modu Toggle */}
+        {dateRange !== '1d' && selectedType !== 'analytics' && (
+          <div className="flex items-center gap-2 mb-4">
+            <span className="text-sm text-muted-foreground">Görünüm:</span>
+            <div className="flex rounded border border-border overflow-hidden">
+              <button
+                onClick={() => setViewMode('summary')}
+                className={`px-3 py-1.5 text-sm ${viewMode === 'summary' ? 'bg-primary text-primary-foreground' : 'bg-secondary/30 text-muted-foreground hover:bg-secondary/50'}`}
+              >
+                Özet (Mağaza Bazlı)
+              </button>
+              <button
+                onClick={() => setViewMode('daily')}
+                className={`px-3 py-1.5 text-sm border-l border-border ${viewMode === 'daily' ? 'bg-primary text-primary-foreground' : 'bg-secondary/30 text-muted-foreground hover:bg-secondary/50'}`}
+              >
+                Günlük Detay
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Export Buttons */}
         <div className="flex items-center gap-3 mb-6">
@@ -591,13 +627,16 @@ const ReportsPage = () => {
                         <th>Durum</th>
                       </tr>
                     )}
-                    {selectedType === 'queue' && (
+                    {selectedType === 'queue' && viewMode === 'summary' && (
                       <tr>
                         <th>Mağaza</th>
                         <th>Bölge</th>
                         <th>İl</th>
                         <th>İlçe</th>
-                        <th>Kuyruk</th>
+                        <th title="Kuyruk > 0 olduğu anlardaki ortalama">Ort. Kuyruk (aktif)</th>
+                        <th>Maks. Kuyruk</th>
+                        <th title="Kaç kez eşik aşıldı ve toplam süre">Eşik Aşım</th>
+                        <th>En Yoğun Saat</th>
                         <th>Eşik</th>
                         <th>Durum</th>
                       </tr>
@@ -635,13 +674,16 @@ const ReportsPage = () => {
                         </td>
                       </tr>
                     ))}
-                    {selectedType === 'queue' && report.stores?.map((store) => (
+                    {selectedType === 'queue' && viewMode === 'summary' && report.stores?.map((store) => (
                       <tr key={store.store_id}>
                         <td className="font-medium">{store.store_name}</td>
                         <td>{store.region_name}</td>
                         <td>{store.city_name}</td>
                         <td>{store.district_name}</td>
-                        <td className="font-mono font-bold">{store.total_queue_length}</td>
+                        <td className="font-mono font-bold">{store.avg_queue_length ?? store.total_queue_length}</td>
+                        <td className="font-mono">{store.max_queue_length ?? '—'}</td>
+                        <td className="font-mono text-xs">{store.exceed_note || (store.exceed_event_count ? `${store.exceed_event_count} olay / ${store.exceed_duration}` : '—')}</td>
+                        <td className="font-mono text-xs">{store.peak_hour || '—'}</td>
                         <td className="font-mono">{store.queue_threshold}</td>
                         <td>
                           <span className={`inline-flex px-2 py-0.5 text-xs ${
@@ -666,6 +708,10 @@ const ReportsPage = () => {
                 </table>
               </div>
             </div>
+          {/* Günlük Detay Görünümü */}
+          {viewMode === 'daily' && report && selectedType !== 'analytics' && (
+            <DailyDetailView report={report} selectedType={selectedType} />
+          )}
           </>
         ) : (
           <div className="text-center py-16 text-muted-foreground">
@@ -675,6 +721,88 @@ const ReportsPage = () => {
         )}
       </div>
     </Layout>
+  );
+};
+
+// Günlük Detay Görünümü Component
+const DailyDetailView = ({ report, selectedType }) => {
+  const stores = report?.stores || [];
+  if (!stores.length) return null;
+
+  // Mağaza başına günlük veriyi hesapla (snapshot'lardan değil mevcut rapor verisini gruplayarak göster)
+  // Şu an snapshot bazlı detay için backend endpoint gerekir; burada mevcut raporu gösteriyoruz
+  const isCounter = selectedType === 'counter';
+
+  return (
+    <div className="mt-6 space-y-6">
+      <h3 className="text-base font-semibold">Günlük Detay</h3>
+      {stores.map(store => (
+        <div key={store.store_id} className="border border-border rounded-lg overflow-hidden">
+          {/* Mağaza başlığı */}
+          <div className="bg-secondary/30 px-4 py-2 flex items-center justify-between">
+            <div>
+              <span className="font-semibold">{store.store_name}</span>
+              <span className="text-xs text-muted-foreground ml-2">{store.city_name}, {store.district_name}</span>
+            </div>
+            <span className={`px-2 py-0.5 text-xs rounded ${
+              store.status === 'critical' ? 'bg-red-500/20 text-red-400' :
+              store.status === 'warning' ? 'bg-amber-500/20 text-amber-400' :
+              'bg-emerald-500/20 text-emerald-400'}`}>
+              {store.status === 'critical' ? 'Kritik' : store.status === 'warning' ? 'Uyarı' : 'Normal'}
+            </span>
+          </div>
+
+          {/* Özet satırı */}
+          <div className="p-3 grid grid-cols-2 md:grid-cols-4 gap-3 border-b border-border">
+            {isCounter ? (
+              <>
+                <div className="text-center"><div className="text-lg font-mono font-bold text-emerald-400">{store.total_in?.toLocaleString()}</div><div className="text-xs text-muted-foreground">Toplam Giriş</div></div>
+                <div className="text-center"><div className="text-lg font-mono font-bold text-amber-400">{store.total_out?.toLocaleString()}</div><div className="text-xs text-muted-foreground">Toplam Çıkış</div></div>
+                <div className="text-center"><div className="text-lg font-mono font-bold">{store.current_visitors}</div><div className="text-xs text-muted-foreground">Mevcut</div></div>
+                <div className="text-center"><div className="text-lg font-mono font-bold">{store.occupancy_percent}%</div><div className="text-xs text-muted-foreground">Doluluk</div></div>
+              </>
+            ) : (
+              <>
+                <div className="text-center"><div className="text-lg font-mono font-bold">{store.avg_queue_length}</div><div className="text-xs text-muted-foreground">Ort. Kuyruk</div></div>
+                <div className="text-center"><div className="text-lg font-mono font-bold text-red-400">{store.max_queue_length}</div><div className="text-xs text-muted-foreground">Maks. Kuyruk</div></div>
+                <div className="text-center"><div className="text-lg font-mono font-bold text-amber-400">{store.exceed_event_count || 0}</div><div className="text-xs text-muted-foreground">Eşik Aşım Olayı</div></div>
+                <div className="text-center"><div className="text-lg font-mono font-bold">{store.exceed_duration || '—'}</div><div className="text-xs text-muted-foreground">Eşik Üzeri Süre</div></div>
+              </>
+            )}
+          </div>
+
+          {/* Ek bilgiler */}
+          <div className="px-3 py-2 text-xs text-muted-foreground flex flex-wrap gap-4">
+            {!isCounter && store.peak_hour && <span>En Yoğun: <strong className="text-foreground">{store.peak_hour}</strong></span>}
+            {!isCounter && <span>Eşik: <strong className="text-foreground">{store.queue_threshold}</strong></span>}
+            {isCounter && <span>Kapasite: <strong className="text-foreground">{store.capacity}</strong></span>}
+            <span>Bölge: <strong className="text-foreground">{store.region_name || '—'}</strong></span>
+          </div>
+        </div>
+      ))}
+
+      {/* Genel Toplam */}
+      <div className="border border-primary/30 bg-primary/5 rounded-lg p-4">
+        <h4 className="font-semibold mb-3 text-primary">Genel Toplam</h4>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {isCounter ? (
+            <>
+              <div className="text-center"><div className="text-xl font-mono font-bold text-emerald-400">{stores.reduce((s,r) => s + (r.total_in||0), 0).toLocaleString()}</div><div className="text-xs text-muted-foreground">Toplam Giriş</div></div>
+              <div className="text-center"><div className="text-xl font-mono font-bold text-amber-400">{stores.reduce((s,r) => s + (r.total_out||0), 0).toLocaleString()}</div><div className="text-xs text-muted-foreground">Toplam Çıkış</div></div>
+              <div className="text-center"><div className="text-xl font-mono font-bold">{stores.reduce((s,r) => s + (r.current_visitors||0), 0)}</div><div className="text-xs text-muted-foreground">Toplam Mevcut</div></div>
+              <div className="text-center"><div className="text-xl font-mono font-bold">{stores.length} mağaza</div><div className="text-xs text-muted-foreground">Toplam Mağaza</div></div>
+            </>
+          ) : (
+            <>
+              <div className="text-center"><div className="text-xl font-mono font-bold">{Math.round(stores.reduce((s,r) => s + (r.avg_queue_length||0), 0) / stores.length * 10)/10}</div><div className="text-xs text-muted-foreground">Ortalama Kuyruk</div></div>
+              <div className="text-center"><div className="text-xl font-mono font-bold text-red-400">{Math.max(...stores.map(r => r.max_queue_length||0))}</div><div className="text-xs text-muted-foreground">En Uzun Kuyruk</div></div>
+              <div className="text-center"><div className="text-xl font-mono font-bold text-amber-400">{stores.reduce((s,r) => s + (r.exceed_event_count||0), 0)}</div><div className="text-xs text-muted-foreground">Toplam Eşik Aşım</div></div>
+              <div className="text-center"><div className="text-xl font-mono font-bold">{stores.length} mağaza</div><div className="text-xs text-muted-foreground">Toplam Mağaza</div></div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
   );
 };
 

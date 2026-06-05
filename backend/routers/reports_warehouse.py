@@ -20,6 +20,31 @@ from data_collector import (
 router = APIRouter(prefix="/reports", tags=["Reports"])
 
 
+async def build_store_location_map() -> dict:
+    """stores → districts → cities → regions zinciriyle lokasyon haritası oluşturur."""
+    stores = await db.stores.find({}, {"_id": 0, "id": 1, "name": 1, "district_id": 1}).to_list(10000)
+    districts = await db.districts.find({}, {"_id": 0, "id": 1, "name": 1, "city_id": 1}).to_list(10000)
+    cities = await db.cities.find({}, {"_id": 0, "id": 1, "name": 1, "region_id": 1}).to_list(10000)
+    regions = await db.regions.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(10000)
+
+    dist_map = {d["id"]: d for d in districts}
+    city_map = {c["id"]: c for c in cities}
+    region_map = {r["id"]: r for r in regions}
+
+    result = {}
+    for s in stores:
+        dist = dist_map.get(s.get("district_id") or "", {})
+        city = city_map.get(dist.get("city_id") or "", {})
+        region = region_map.get(city.get("region_id") or "", {})
+        result[s["id"]] = {
+            "store_name": s.get("name", ""),
+            "district_name": dist.get("name", ""),
+            "city_name": city.get("name", ""),
+            "region_name": region.get("name", ""),
+        }
+    return result
+
+
 # ============== HELPER FUNCTIONS ==============
 
 async def get_filtered_store_ids(
@@ -274,7 +299,10 @@ async def get_counter_report(
     ]
     snapshot_daily = await db.counter_snapshots.aggregate(daily_last_pipeline).to_list(50000)
 
-    # Lokasyon bilgilerini daily_summaries'den al (varsa)
+    # Lokasyon bilgilerini stores/districts/cities/regions'dan al (doğrudan)
+    store_location_map = await build_store_location_map()
+
+    # daily_summaries'den override (varsa daha güncel olabilir)
     location_map = {}
     loc_query = {"date": {"$gte": start_date, "$lte": end_date}}
     if filtered_store_ids:
@@ -287,6 +315,14 @@ async def get_counter_report(
                 "district_name": d.get("district_name", ""),
                 "city_name": d.get("city_name", ""),
                 "region_name": d.get("region_name", ""),
+            }
+    # Fallback: daily_summaries'de eksik olanları store_location_map'den tamamla
+    for sid, info in store_location_map.items():
+        if sid not in location_map or not location_map[sid].get("city_name"):
+            location_map[sid] = {
+                "district_name": info["district_name"],
+                "city_name": info["city_name"],
+                "region_name": info["region_name"],
             }
 
     # Her store için günlük son değerleri topla
@@ -374,6 +410,7 @@ async def get_queue_report(
     store_threshold_map = {s["id"]: s.get("queue_threshold", 5) for s in stores_info}
 
     # Lokasyon bilgileri
+    store_location_map = await build_store_location_map()
     location_map = {}
     loc_query = {"date": {"$gte": start_date, "$lte": end_date}}
     if filtered_store_ids:
@@ -387,6 +424,14 @@ async def get_queue_report(
                 "district_name": d.get("district_name", ""),
                 "city_name": d.get("city_name", ""),
                 "region_name": d.get("region_name", ""),
+            }
+    for sid, info in store_location_map.items():
+        if sid not in location_map or not location_map[sid].get("city_name"):
+            location_map[sid] = {
+                "store_name": info["store_name"],
+                "district_name": info["district_name"],
+                "city_name": info["city_name"],
+                "region_name": info["region_name"],
             }
 
     # Her store için: ortalama kuyruk, max kuyruk, eşik aşım sayısı

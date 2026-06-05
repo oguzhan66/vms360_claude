@@ -1,27 +1,34 @@
-import { ListOrdered, MapPin, AlertTriangle } from 'lucide-react';
+import { ListOrdered, MapPin, AlertTriangle, CheckCircle } from 'lucide-react';
+
+const isHexId = (name) => !name || /^[0-9a-f-]{6,}$/i.test(name.trim());
+const formatZoneName = (cameraName, zoneIndex) => {
+  if (isHexId(cameraName)) return `Kasa ${zoneIndex + 1}`;
+  return cameraName;
+};
 
 export const QueueCard = ({ data }) => {
-  const getStatusClass = (status) => {
-    switch (status) {
-      case 'critical': return 'status-critical';
-      case 'warning': return 'status-warning';
-      default: return 'status-normal';
-    }
-  };
+  const statusColor = {
+    critical: { dot: 'critical', border: 'status-critical', text: 'text-red-400', bar: 'bg-red-500', badge: 'bg-red-500/15 text-red-400' },
+    warning:  { dot: 'warning',  border: 'status-warning',  text: 'text-amber-400', bar: 'bg-amber-500', badge: 'bg-amber-500/15 text-amber-400' },
+    normal:   { dot: 'normal',   border: 'status-normal',   text: 'text-emerald-400', bar: 'bg-emerald-500', badge: 'bg-emerald-500/15 text-emerald-400' },
+  }[data.status] || { dot: 'normal', border: 'status-normal', text: 'text-emerald-400', bar: 'bg-emerald-500', badge: 'bg-emerald-500/15 text-emerald-400' };
 
-  const getOccupancyClass = (status) => {
-    switch (status) {
-      case 'critical': return 'critical';
-      case 'warning': return 'warning';
-      default: return 'normal';
-    }
-  };
+  const threshold = data.queue_threshold || 1;
+  const total = data.total_queue_length || 0;
+  const barPercent = Math.min(100, (total / (threshold * 2)) * 100);
+
+  const activeZones = (data.zones || []).filter(z => z.queue_length > 0).length;
+  const totalZones = (data.zones || []).length;
+  const kasaLabel = totalZones === 0 ? null
+    : activeZones === 0 ? `${totalZones} kasanın tamamı boş`
+    : activeZones === totalZones ? `${activeZones} kasanın tamamında kuyruk var`
+    : `${activeZones}/${totalZones} kasada kuyruk var`;
+
+  const statusLabel = { critical: 'Kritik', warning: 'Uyarı', normal: 'Normal' }[data.status] || 'Normal';
 
   return (
-    <div 
-      className={`store-card ${getStatusClass(data.status)}`}
-      data-testid={`queue-card-${data.store_id}`}
-    >
+    <div className={`store-card ${statusColor.border}`} data-testid={`queue-card-${data.store_id}`}>
+      {/* Header */}
       <div className="flex items-start justify-between mb-3">
         <div>
           <h3 className="font-semibold text-sm text-foreground">{data.store_name}</h3>
@@ -30,36 +37,61 @@ export const QueueCard = ({ data }) => {
             <span>{data.district_name}, {data.city_name}</span>
           </div>
         </div>
-        <div className={`status-dot ${getOccupancyClass(data.status)}`} />
+        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${statusColor.badge}`}>
+          {statusLabel}
+        </span>
       </div>
 
-      <div className="flex items-center gap-3 mt-4">
-        <div className="flex-1">
-          <div className="text-xs text-muted-foreground uppercase tracking-wide">Toplam Kuyruk</div>
-          <div className={`font-mono text-2xl font-bold ${getStatusClass(data.status)} flex items-center gap-2`}>
+      {/* Ana Metrik */}
+      <div className="flex items-end justify-between mt-3">
+        <div>
+          <div className="text-xs text-muted-foreground mb-1">Toplam Kuyruk</div>
+          <div className={`font-mono text-3xl font-bold ${statusColor.text} flex items-center gap-2`}>
             <ListOrdered className="w-5 h-5" />
-            {data.total_queue_length}
+            {total}
           </div>
         </div>
-        <div className="text-right">
-          <div className="text-xs text-muted-foreground">Esik</div>
-          <div className="font-mono text-sm text-muted-foreground">{data.queue_threshold}</div>
+        <div className="text-right text-xs text-muted-foreground">
+          <div>Eşik: <span className="font-mono font-semibold text-foreground">{threshold}</span></div>
+          {kasaLabel && (
+            <div className={`mt-1 font-medium ${activeZones > 0 ? statusColor.text : 'text-emerald-400'}`}>
+              {kasaLabel}
+            </div>
+          )}
         </div>
       </div>
 
-      {data.zones && data.zones.length > 0 && (
-        <div className="mt-4 pt-3 border-t border-white/5">
-          <div className="text-xs text-muted-foreground mb-2">Bolgeler</div>
-          <div className="grid grid-cols-2 gap-2">
+      {/* Progress bar */}
+      <div className="mt-3">
+        <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+          <div
+            className={`h-full rounded-full transition-all ${statusColor.bar}`}
+            style={{ width: `${barPercent}%` }}
+          />
+        </div>
+        <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
+          <span>0</span>
+          <span className="text-muted-foreground">eşik: {threshold}</span>
+          <span>{threshold * 2}</span>
+        </div>
+      </div>
+
+      {/* Kasa detayları */}
+      {totalZones > 0 && (
+        <div className="mt-3 pt-3 border-t border-white/5">
+          <div className="text-xs text-muted-foreground mb-2">Kasa Detayı</div>
+          <div className="grid grid-cols-2 gap-1.5">
             {data.zones.map((zone, idx) => (
-              <div 
-                key={idx} 
-                className={`flex items-center justify-between p-2 ${zone.is_queue ? 'bg-amber-500/10 border border-amber-500/30' : 'bg-white/5'}`}
+              <div
+                key={idx}
+                className={`flex items-center justify-between px-2 py-1.5 rounded ${
+                  zone.queue_length > 0 ? 'bg-amber-500/10 border border-amber-500/20' : 'bg-white/5'
+                }`}
               >
-                <span className="text-xs text-muted-foreground">
-                  {zone.camera_name} - Z{zone.zone_index}
+                <span className="text-xs text-muted-foreground truncate">
+                  {formatZoneName(zone.camera_name, idx)}
                 </span>
-                <span className={`font-mono text-sm font-semibold ${zone.is_queue ? 'text-amber-400' : 'text-foreground'}`}>
+                <span className={`font-mono text-sm font-bold ml-2 ${zone.queue_length > 0 ? 'text-amber-400' : 'text-muted-foreground'}`}>
                   {zone.queue_length}
                 </span>
               </div>
@@ -68,10 +100,17 @@ export const QueueCard = ({ data }) => {
         </div>
       )}
 
+      {/* Uyarı banner */}
       {data.status === 'critical' && (
-        <div className="mt-3 p-2 bg-red-500/10 border border-red-500/30 flex items-center gap-2 text-xs text-red-400">
-          <AlertTriangle className="w-4 h-4" />
-          Kuyruk esik degerinin 2 katina ulasti!
+        <div className="mt-3 p-2 bg-red-500/10 border border-red-500/30 rounded flex items-center gap-2 text-xs text-red-400">
+          <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+          Kuyruk eşik değerinin 2 katına ulaştı!
+        </div>
+      )}
+      {data.status === 'normal' && total === 0 && (
+        <div className="mt-3 p-2 bg-emerald-500/10 border border-emerald-500/20 rounded flex items-center gap-2 text-xs text-emerald-400">
+          <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" />
+          Kuyruk yok
         </div>
       )}
     </div>

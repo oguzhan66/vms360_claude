@@ -3,36 +3,51 @@ import { Layout } from '../components/Layout';
 import { FilterBar } from '../components/FilterBar';
 import { StoreCard } from '../components/StoreCard';
 import { StatCard } from '../components/StatCard';
+import { AlertPanel } from '../components/AlertPanel';
 import { liveDataApi, reportApi, healthApi } from '../services/api';
-import { Users, TrendingUp, TrendingDown, AlertTriangle, Store, ListOrdered, WifiOff } from 'lucide-react';
-import { 
-  PieChart, Pie, Cell, ResponsiveContainer, 
-  AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid 
+import api from '../services/api';
+import { Users, TrendingUp, TrendingDown, AlertTriangle, Store, ListOrdered, WifiOff, UserCheck, Bell } from 'lucide-react';
+import {
+  PieChart, Pie, Cell, ResponsiveContainer,
+  AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid,
+  BarChart, Bar
 } from 'recharts';
 
 const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'];
 
 const Dashboard = () => {
+  const [showAlertPanel, setShowAlertPanel] = useState(false);
+  const [activeAlertCount, setActiveAlertCount] = useState(0);
   const [counterData, setCounterData] = useState([]);
   const [queueData, setQueueData] = useState([]);
+  const [analyticsData, setAnalyticsData] = useState(null);
   const [summary, setSummary] = useState(null);
   const [filters, setFilters] = useState({});
   const [refreshInterval, setRefreshInterval] = useState(30);
   const [loading, setLoading] = useState(true);
   const [healthStatus, setHealthStatus] = useState(null);
+  const [lastUpdated, setLastUpdated] = useState(null);
 
   const loadData = useCallback(async () => {
     try {
-      const [counterRes, queueRes, summaryRes, healthRes] = await Promise.all([
+      const [counterRes, queueRes, summaryRes, healthRes, analyticsRes] = await Promise.all([
         liveDataApi.getCounter(),
         liveDataApi.getQueue(),
         reportApi.getSummary(filters),
         healthApi.getStatus().catch(() => ({ data: null })),
+        reportApi.getAnalytics({ date_range: '1d' }).catch(() => ({ data: null })),
       ]);
       setCounterData(counterRes.data);
       setQueueData(queueRes.data);
       setSummary(summaryRes.data);
       setHealthStatus(healthRes.data);
+      setAnalyticsData(analyticsRes.data);
+      setLastUpdated(new Date());
+      // Aktif uyarı sayısını çek
+      try {
+        const alertRes = await api.get('/alerts?status=active&limit=50');
+        setActiveAlertCount((alertRes.data.alerts || []).length);
+      } catch {}
     } catch (e) {
       console.error('Failed to load data', e);
     } finally {
@@ -86,12 +101,32 @@ const Dashboard = () => {
               Tum magazalarin canli izleme paneli
             </p>
           </div>
-          <div className="text-right">
-            <div className="text-xs text-muted-foreground">Son guncelleme</div>
-            <div className="font-mono text-sm">{new Date().toLocaleTimeString('tr-TR')}</div>
+          <div className="flex items-center gap-3">
+            {/* Uyarı Merkezi butonu */}
+            <button
+              onClick={() => setShowAlertPanel(true)}
+              className="relative flex items-center gap-2 px-3 py-2 bg-secondary/50 hover:bg-secondary rounded-lg border border-border transition-colors"
+            >
+              <Bell className={`w-4 h-4 ${activeAlertCount > 0 ? 'text-amber-400' : 'text-muted-foreground'}`} />
+              <span className="text-sm">Uyarılar</span>
+              {activeAlertCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-bold">
+                  {activeAlertCount}
+                </span>
+              )}
+            </button>
+            <div className="text-right">
+              <div className="text-xs text-muted-foreground">Son guncelleme</div>
+              <div className="font-mono text-sm">
+                {lastUpdated ? lastUpdated.toLocaleTimeString('tr-TR') : '—'}
+              </div>
+            </div>
           </div>
+
         </div>
       </div>
+
+      {showAlertPanel && <AlertPanel onClose={() => setShowAlertPanel(false)} />}
 
       <div className="page-content">
         <FilterBar 
@@ -215,6 +250,7 @@ const Dashboard = () => {
             <div className="chart-title">En Yogun Magazalar</div>
             <div className="space-y-3">
               {filteredCounterData
+                .filter(s => s.current_visitors > 0)
                 .sort((a, b) => b.current_visitors - a.current_visitors)
                 .slice(0, 5)
                 .map((store, idx) => (
@@ -245,6 +281,95 @@ const Dashboard = () => {
                 </div>
               )}
             </div>
+          </div>
+        </div>
+
+        {/* Kuyruk + Demografik Row */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+
+          {/* Kuyruk Durumu */}
+          <div className="chart-container">
+            <div className="chart-title flex items-center gap-2">
+              <ListOrdered className="w-4 h-4 text-amber-400" />
+              Kuyruk Durumu
+            </div>
+            {queueData.length > 0 ? (
+              <div className="space-y-3 mt-2">
+                {queueData.map(store => (
+                  <div key={store.store_id} className="flex items-center gap-3">
+                    <div className="flex-1">
+                      <div className="text-sm font-medium">{store.store_name}</div>
+                      <div className="text-xs text-muted-foreground">{store.city_name}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className={`font-mono font-bold text-lg ${store.status === 'critical' ? 'text-red-400' : store.status === 'warning' ? 'text-amber-400' : 'text-emerald-400'}`}>
+                        {store.total_queue_length}
+                      </div>
+                      <div className="text-xs text-muted-foreground">kişi</div>
+                    </div>
+                    <div className="w-24">
+                      <div className="text-xs text-muted-foreground mb-1">Eşik: {store.queue_threshold}</div>
+                      <div className="h-2 bg-white/10 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full ${store.status === 'critical' ? 'bg-red-500' : store.status === 'warning' ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                          style={{ width: `${Math.min(100, (store.total_queue_length / (store.queue_threshold * 2)) * 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                    <div className={`w-2 h-8 rounded-full ${store.status === 'critical' ? 'bg-red-500' : store.status === 'warning' ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="h-24 flex items-center justify-center text-sm text-muted-foreground">Kuyruk verisi yok</div>
+            )}
+          </div>
+
+          {/* Demografik Özet */}
+          <div className="chart-container">
+            <div className="chart-title flex items-center gap-2">
+              <UserCheck className="w-4 h-4 text-purple-400" />
+              Yaş/Cinsiyet Özeti (Bugün)
+            </div>
+            {(() => {
+              const total = analyticsData?.summary?.total_detections || 0;
+              const male = analyticsData?.gender_distribution?.Male || 0;
+              const female = analyticsData?.gender_distribution?.Female || 0;
+              const ageDist = analyticsData?.age_distribution || {};
+              const ageData = Object.entries(ageDist).map(([k, v]) => ({ age: k, sayi: v }));
+              return total > 0 ? (
+                <div className="mt-2">
+                  <div className="grid grid-cols-3 gap-3 mb-4">
+                    <div className="text-center p-2 bg-secondary/30 rounded">
+                      <div className="text-xl font-mono font-bold">{total}</div>
+                      <div className="text-xs text-muted-foreground">Toplam Tespit</div>
+                    </div>
+                    <div className="text-center p-2 bg-blue-500/10 rounded">
+                      <div className="text-xl font-mono font-bold text-blue-400">{male}</div>
+                      <div className="text-xs text-muted-foreground">Erkek</div>
+                    </div>
+                    <div className="text-center p-2 bg-pink-500/10 rounded">
+                      <div className="text-xl font-mono font-bold text-pink-400">{female}</div>
+                      <div className="text-xs text-muted-foreground">Kadın</div>
+                    </div>
+                  </div>
+                  <div className="h-28">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={ageData} layout="vertical">
+                        <XAxis type="number" tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }} />
+                        <YAxis dataKey="age" type="category" width={40} tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }} />
+                        <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '4px' }} />
+                        <Bar dataKey="sayi" fill="#8B5CF6" radius={[0, 4, 4, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              ) : (
+                <div className="h-24 flex items-center justify-center text-sm text-muted-foreground">
+                  {analyticsData ? 'Bugün analitik verisi yok' : 'Yükleniyor...'}
+                </div>
+              );
+            })()}
           </div>
         </div>
 

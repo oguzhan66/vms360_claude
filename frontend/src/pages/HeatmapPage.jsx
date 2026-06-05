@@ -95,10 +95,16 @@ const HeatmapPage = () => {
           locationApi.getRegions(),
           locationApi.getCities()
         ]);
-        setStoresWithFloors(storesRes.data || []);
+        const storeList = storesRes.data || [];
+        setStoresWithFloors(storeList);
         setRegions(regionsRes.data);
         setCities(citiesRes.data);
-        
+
+        // İlk mağazayı otomatik seç
+        if (storeList.length > 0) {
+          setSelectedStore(storeList[0].store_id);
+        }
+
         // Load districts
         const districtsRes = await locationApi.getDistricts();
         setDistricts(districtsRes.data);

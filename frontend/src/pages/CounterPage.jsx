@@ -132,7 +132,7 @@ const CounterPage = () => {
               className="bg-secondary/50 border border-white/10 text-sm px-3 py-1.5 focus:outline-none focus:border-primary"
               data-testid="sort-select"
             >
-              <option value="name">Ada Gore</option>
+              <option value="name">İsme Göre</option>
               <option value="visitors">Ziyaretciye Gore</option>
               <option value="occupancy">Doluluga Gore</option>
               <option value="status">Duruma Gore</option>

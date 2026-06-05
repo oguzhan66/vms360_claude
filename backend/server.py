@@ -3620,12 +3620,13 @@ async def export_report(
                     f"{event.get('time','')},{event.get('camera_name','')},{event.get('age','')},{event.get('gender','')},{event.get('is_recognized','')}"
                 )
         
-        csv_content = "\n".join(csv_lines)
+        # UTF-8 BOM ekle — Excel'de Türkçe karakterler doğru görünsün
+        csv_content = "﻿" + "\n".join(csv_lines)
         filename = f"rapor_{report_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
         return StreamingResponse(
-            iter([csv_content]),
-            media_type="text/csv; charset=utf-8",
-            headers={"Content-Disposition": f"attachment; filename={filename}"}
+            iter([csv_content.encode("utf-8")]),
+            media_type="text/csv; charset=utf-8-sig",
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"}
         )
     
     elif format == "excel":
@@ -3833,7 +3834,7 @@ async def export_report(
         return StreamingResponse(
             output,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f"attachment; filename={filename}"}
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"}
         )
 
 # ============== HIERARCHY ENDPOINT ==============
@@ -5486,6 +5487,232 @@ async def export_analytics_pdf(
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename=gelismis_analitik_{datetime.now().strftime('%Y%m%d')}.pdf"}
     )
+
+
+# ============== ALERT ENDPOINTS ==============
+
+@api_router.get("/alerts")
+async def get_alerts(
+    alert_type: Optional[str] = None,
+    store_id: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    status: Optional[str] = None,  # active, cleared, all
+    limit: int = 100,
+    user: dict = Depends(require_auth)
+):
+    """Uyarı listesi — filtrelenebilir"""
+    now = datetime.now(timezone.utc)
+    today = now.strftime("%Y-%m-%d")
+    query = {}
+    if alert_type:
+        query["alert_type"] = alert_type
+    if store_id:
+        query["store_id"] = store_id
+    if date_from or date_to:
+        query["date"] = {}
+        if date_from:
+            query["date"]["$gte"] = date_from
+        if date_to:
+            query["date"]["$lte"] = date_to
+    else:
+        query["date"] = today  # Varsayılan: bugün
+    if status == "active":
+        query["cleared_at"] = None
+    elif status == "cleared":
+        query["cleared_at"] = {"$ne": None}
+
+    alerts = await db.alerts.find(query, {"_id": 0}).sort("started_at", -1).limit(limit).to_list(limit)
+    return {"alerts": alerts, "total": len(alerts)}
+
+
+@api_router.get("/alerts/stats")
+async def get_alert_stats(
+    alert_type: Optional[str] = None,
+    store_id: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    user: dict = Depends(require_auth)
+):
+    """Saatlik/günlük uyarı istatistikleri — grafik için"""
+    now = datetime.now(timezone.utc)
+    today = now.strftime("%Y-%m-%d")
+    start = date_from or (now - timedelta(days=7)).strftime("%Y-%m-%d")
+    end = date_to or today
+
+    match = {"date": {"$gte": start, "$lte": end}}
+    if alert_type:
+        match["alert_type"] = alert_type
+    if store_id:
+        match["store_id"] = store_id
+
+    # Saatlik dağılım
+    hourly_pipeline = [
+        {"$match": match},
+        {"$group": {"_id": {"hour": "$hour", "level": "$level"}, "count": {"$sum": 1}}},
+        {"$sort": {"_id.hour": 1}}
+    ]
+    hourly_raw = await db.alerts.aggregate(hourly_pipeline).to_list(100)
+    hourly = [{
+        "hour": r["_id"]["hour"],
+        "label": f"{str(r['_id']['hour']).zfill(2)}:00",
+        "level": r["_id"]["level"],
+        "count": r["count"]
+    } for r in hourly_raw]
+
+    # Günlük özet
+    daily_pipeline = [
+        {"$match": match},
+        {"$group": {
+            "_id": "$date",
+            "total": {"$sum": 1},
+            "critical": {"$sum": {"$cond": [{"$eq": ["$level", "critical"]}, 1, 0]}},
+            "warning": {"$sum": {"$cond": [{"$eq": ["$level", "warning"]}, 1, 0]}},
+            "avg_duration": {"$avg": "$duration_minutes"}
+        }},
+        {"$sort": {"_id": 1}}
+    ]
+    daily = await db.alerts.aggregate(daily_pipeline).to_list(100)
+
+    # Mağaza özeti
+    store_pipeline = [
+        {"$match": match},
+        {"$group": {
+            "_id": "$store_id",
+            "store_name": {"$first": "$store_name"},
+            "total": {"$sum": 1},
+            "critical": {"$sum": {"$cond": [{"$eq": ["$level", "critical"]}, 1, 0]}},
+            "avg_duration": {"$avg": "$duration_minutes"}
+        }},
+        {"$sort": {"total": -1}}
+    ]
+    by_store = await db.alerts.aggregate(store_pipeline).to_list(50)
+
+    return {
+        "start_date": start, "end_date": end,
+        "hourly_distribution": hourly,
+        "daily_summary": [{"date": d["_id"], "total": d["total"],
+                            "critical": d["critical"], "warning": d["warning"],
+                            "avg_duration": round(d.get("avg_duration") or 0, 1)} for d in daily],
+        "by_store": [{"store_id": s["_id"], "store_name": s["store_name"],
+                      "total": s["total"], "critical": s["critical"],
+                      "avg_duration": round(s.get("avg_duration") or 0, 1)} for s in by_store],
+        "total_alerts": sum(d["total"] for d in daily)
+    }
+
+
+@api_router.post("/alerts/send-report")
+async def send_alert_report(
+    body: dict,
+    user: dict = Depends(require_auth)
+):
+    """Seçili uyarıları e-posta ile gönder"""
+    import xlsxwriter
+    date_from = body.get("date_from")
+    date_to = body.get("date_to")
+    alert_type = body.get("alert_type")
+    recipient = body.get("recipient")
+
+    now = datetime.now(timezone.utc)
+    start = date_from or now.strftime("%Y-%m-%d")
+    end = date_to or now.strftime("%Y-%m-%d")
+
+    query = {"date": {"$gte": start, "$lte": end}}
+    if alert_type:
+        query["alert_type"] = alert_type
+    alerts = await db.alerts.find(query, {"_id": 0}).sort("started_at", -1).to_list(1000)
+
+    if not alerts:
+        return {"success": False, "message": "Belirtilen aralıkta uyarı bulunamadı"}
+
+    smtp = await db.smtp_settings.find_one({}, {"_id": 0})
+    if not smtp or not smtp.get("host"):
+        return {"success": False, "message": "SMTP ayarları yapılmamış"}
+
+    # Excel oluştur
+    output = BytesIO()
+    wb = xlsxwriter.Workbook(output, {"in_memory": True})
+    header_fmt = wb.add_format({"bold": True, "bg_color": "#3B82F6", "font_color": "white", "border": 1})
+    cell_fmt = wb.add_format({"border": 1})
+    crit_fmt = wb.add_format({"border": 1, "bg_color": "#FEE2E2", "font_color": "#991B1B"})
+    warn_fmt = wb.add_format({"border": 1, "bg_color": "#FEF3C7", "font_color": "#92400E"})
+
+    ws = wb.add_worksheet("Uyarı Raporu")
+    headers = ["Mağaza", "Tür", "Seviye", "Başlangıç", "Bitiş", "Süre (dk)", "Maks. Değer", "Eşik"]
+    for col, h in enumerate(headers):
+        ws.write(0, col, h, header_fmt)
+    ws.set_column(0, 0, 20)
+    ws.set_column(1, 7, 15)
+
+    type_map = {"counter": "Kişi Sayma", "queue": "Kuyruk"}
+    level_map = {"critical": "Kritik", "warning": "Uyarı"}
+
+    for row, a in enumerate(alerts, 1):
+        fmt = crit_fmt if a.get("level") == "critical" else warn_fmt
+        ws.write(row, 0, a.get("store_name", ""), fmt)
+        ws.write(row, 1, type_map.get(a.get("alert_type", ""), a.get("alert_type", "")), fmt)
+        ws.write(row, 2, level_map.get(a.get("level", ""), a.get("level", "")), fmt)
+        ws.write(row, 3, a.get("started_at", "")[:19].replace("T", " "), fmt)
+        ws.write(row, 4, a.get("cleared_at", "Devam ediyor")[:19].replace("T", " ") if a.get("cleared_at") else "Devam ediyor", fmt)
+        ws.write(row, 5, a.get("duration_minutes", "-"), fmt)
+        ws.write(row, 6, a.get("peak_value", 0), fmt)
+        ws.write(row, 7, a.get("threshold", a.get("threshold_percent", "-")), fmt)
+
+    wb.close()
+    output.seek(0)
+
+    # E-posta gönder
+    try:
+        msg = MIMEMultipart()
+        msg["Subject"] = f"VMS360 Uyarı Raporu | {start} - {end}"
+        msg["From"] = f"{smtp.get('from_name','VMS360')} <{smtp['from_email']}>"
+        msg["To"] = recipient or smtp["from_email"]
+
+        html = f"""<html><body style="font-family:Arial;padding:20px;">
+        <h2>VMS360 Uyarı Raporu</h2>
+        <p>Tarih: {start} - {end}</p>
+        <p>Toplam uyarı: <strong>{len(alerts)}</strong></p>
+        <p>Kritik: <strong style="color:red">{sum(1 for a in alerts if a.get('level')=='critical')}</strong></p>
+        <p>Uyarı: <strong style="color:orange">{sum(1 for a in alerts if a.get('level')=='warning')}</strong></p>
+        <p>Excel raporu ektedir.</p>
+        </body></html>"""
+        msg.attach(MIMEText(html, "html", "utf-8"))
+
+        from email.mime.base import MIMEBase
+        from email import encoders
+        part = MIMEBase("application", "octet-stream")
+        part.set_payload(output.read())
+        encoders.encode_base64(part)
+        part.add_header("Content-Disposition", f"attachment; filename=uyari_raporu_{start}_{end}.xlsx")
+        msg.attach(part)
+
+        if smtp.get("use_tls", True):
+            server = smtplib.SMTP(smtp["host"], smtp["port"], timeout=30)
+            server.starttls()
+        else:
+            server = smtplib.SMTP_SSL(smtp["host"], smtp["port"], timeout=30)
+        if smtp.get("username"):
+            server.login(smtp["username"], smtp["password"])
+        server.sendmail(msg["From"], msg["To"], msg.as_string())
+        server.quit()
+        return {"success": True, "message": f"{len(alerts)} uyarı raporu gönderildi", "sent_to": msg["To"]}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+@api_router.get("/alerts/settings")
+async def get_alert_settings(user: dict = Depends(require_auth)):
+    settings = await db.alert_settings.find_one({}, {"_id": 0}) or {
+        "enabled": True, "alert_emails": [], "counter_warning_percent": 70,
+        "counter_critical_percent": 90, "offline_threshold_minutes": 30
+    }
+    return settings
+
+
+@api_router.put("/alerts/settings")
+async def update_alert_settings(body: dict, user: dict = Depends(require_admin)):
+    await db.alert_settings.update_one({}, {"$set": body}, upsert=True)
+    return body
 
 
 # Include the router in the main app
