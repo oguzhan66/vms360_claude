@@ -342,14 +342,17 @@ async def get_counter_report(
     elif date_range in ("1m", "30d"):
         start_date = (now - timedelta(days=30)).strftime("%Y-%m-%d")
         end_date = today
+    elif date_range == "1y":
+        start_date = (now - timedelta(days=365)).strftime("%Y-%m-%d")
+        end_date = today
     else:
         start_date = end_date = today
-    
+
     # Build query
     query = {"date": {"$gte": start_date, "$lte": end_date}}
     if filtered_ids:
         query["store_id"] = {"$in": filtered_ids}
-    
+
     # Add hour filter if specified
     if hour_from is not None:
         query["hour"] = {"$gte": hour_from}
@@ -382,6 +385,8 @@ async def get_counter_report(
                 "total_out": snap.get("total_out", 0),
                 "current_visitors": snap.get("current_visitors", 0),
                 "max_visitors": snap.get("current_visitors", 0),
+                "capacity": snap.get("capacity", 100),
+                "occupancy_percent": snap.get("occupancy_percent", 0),
                 "date": today,
                 "status": snap.get("status", "normal")
             })
@@ -449,6 +454,11 @@ async def get_counter_report(
             s["avg_daily_visitors"] = round(s["total_in"] / s["days"], 1) if s["days"] > 0 else 0
             s["status"] = "normal"
     
+    total_in = sum(s["total_in"] for s in stores)
+    total_out = sum(s["total_out"] for s in stores)
+    total_visitors = sum(s.get("current_visitors", 0) for s in stores)
+    avg_occupancy = round(sum(s.get("occupancy_percent", 0) for s in stores) / len(stores)) if stores else 0
+
     return {
         "report_type": "counter",
         "date_range": date_range,
@@ -457,9 +467,13 @@ async def get_counter_report(
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "summary": {
             "total_stores": len(stores),
-            "total_in": sum(s["total_in"] for s in stores),
-            "total_out": sum(s["total_out"] for s in stores),
-            "current_visitors": sum(s.get("current_visitors", 0) for s in stores)
+            "total_in": total_in,
+            "total_out": total_out,
+            "current_visitors": total_visitors,
+            "avg_occupancy": avg_occupancy,
+            "stores_critical": len([s for s in stores if s.get("status") == "critical"]),
+            "stores_warning": len([s for s in stores if s.get("status") == "warning"]),
+            "stores_normal": len([s for s in stores if s.get("status") == "normal"])
         },
         "stores": stores,
         "data_source": "local_warehouse"
@@ -499,9 +513,12 @@ async def get_queue_report(
     elif date_range in ("1m", "30d"):
         start_date = (now - timedelta(days=30)).strftime("%Y-%m-%d")
         end_date = now.strftime("%Y-%m-%d")
+    elif date_range == "1y":
+        start_date = (now - timedelta(days=365)).strftime("%Y-%m-%d")
+        end_date = now.strftime("%Y-%m-%d")
     else:
         start_date = end_date = now.strftime("%Y-%m-%d")
-    
+
     # Build query
     query = {"date": {"$gte": start_date, "$lte": end_date}}
     if filtered_ids:
@@ -523,28 +540,112 @@ async def get_queue_report(
     
     logger.info(f"Queue report: Found {len(snapshots)} snapshots")
     
-    # Aggregate by store
+    # Eşik haritasını önceden al
+    all_stores_thresh = await db.stores.find({}, {"_id": 0, "id": 1, "queue_threshold": 1}).to_list(500)
+    threshold_map_pre = {s["id"]: s.get("queue_threshold", 5) for s in all_stores_thresh}
+
+    # Aggregate by store — anlamlı metrikler
     store_data = {}
     for snap in snapshots:
         sid = snap["store_id"]
+        q = snap.get("total_queue_length", 0)
+        threshold = threshold_map_pre.get(sid, 5)
+
         if sid not in store_data:
             store_data[sid] = {
                 "store_id": sid,
                 "store_name": snap["store_name"],
                 "max_queue_length": 0,
-                "total_queue_readings": 0,
-                "sum_queue_length": 0
+                "total_readings": 0,
+                "active_readings": 0,       # kuyruk > 0 olan snapshot sayısı
+                "active_sum": 0,            # kuyruk > 0 olduğundaki toplam
+                "exceed_readings": 0,       # eşik aşan snapshot sayısı (ham)
+                "exceed_minutes": 0,        # eşik aşılan toplam dakika
+                "prev_exceeded": False,
+                "event_count": 0,           # kaç kez eşik aşım olayı başladı
+                "peak_hour_counts": {}
             }
-        store_data[sid]["max_queue_length"] = max(store_data[sid]["max_queue_length"], snap.get("total_queue_length", 0))
-        store_data[sid]["sum_queue_length"] += snap.get("total_queue_length", 0)
-        store_data[sid]["total_queue_readings"] += 1
+        d = store_data[sid]
+        d["max_queue_length"] = max(d["max_queue_length"], q)
+        d["total_readings"] += 1
+
+        # Aktif kuyruk ortalaması (sadece > 0 olanlar)
+        if q > 0:
+            d["active_readings"] += 1
+            d["active_sum"] += q
+
+        # Eşik aşımı — olay bazlı sayım
+        exceeds = q >= threshold
+        if exceeds:
+            d["exceed_readings"] += 1
+            d["exceed_minutes"] += 5  # Her snapshot 5 dakikadır
+            if not d["prev_exceeded"]:
+                d["event_count"] += 1  # Yeni olay başladı
+        d["prev_exceeded"] = exceeds
+
+        # Saatlik yoğunluk
+        h = snap.get("hour", 0)
+        d["peak_hour_counts"][h] = d["peak_hour_counts"].get(h, 0) + q
     
+    # Lokasyon bilgilerini al
+    all_stores = await db.stores.find({}, {"_id": 0}).to_list(500)
+    districts_list = await db.districts.find({}, {"_id": 0}).to_list(500)
+    cities_list = await db.cities.find({}, {"_id": 0}).to_list(500)
+    regions_list = await db.regions.find({}, {"_id": 0}).to_list(500)
+    store_loc_map = {s["id"]: s for s in all_stores}
+    dist_map = {d["id"]: d for d in districts_list}
+    city_map = {c["id"]: c for c in cities_list}
+    region_map = {r["id"]: r for r in regions_list}
+
     stores = list(store_data.values())
     for s in stores:
-        s["avg_queue_length"] = round(s["sum_queue_length"] / s["total_queue_readings"], 1) if s["total_queue_readings"] > 0 else 0
-        del s["sum_queue_length"]
-        del s["total_queue_readings"]
+        # Anlamlı ortalama: sadece kuyruk > 0 olan zamanlardaki ortalama
+        s["avg_queue_length"] = round(s["active_sum"] / s["active_readings"], 1) if s["active_readings"] > 0 else 0
+        s["total_queue_length"] = s["avg_queue_length"]  # frontend bu alanı bekliyor
+
+        # En yoğun saat
+        peak_h = max(s["peak_hour_counts"], key=s["peak_hour_counts"].get) if s["peak_hour_counts"] else None
+        s["peak_hour"] = f"{str(peak_h).zfill(2)}:00" if peak_h is not None else "—"
+
+        # Eşik aşım süresi — dakika → saat:dakika formatı
+        exceed_min = s["exceed_minutes"]
+        s["exceed_duration"] = f"{exceed_min // 60}s {exceed_min % 60}dk" if exceed_min >= 60 else f"{exceed_min} dk"
+        s["exceed_event_count"] = s["event_count"]  # Kaç kez eşik aşıldı (olay)
+        s["exceed_minutes_total"] = exceed_min
+
+        # Temizle
+        del s["total_readings"], s["active_readings"], s["active_sum"]
+        del s["exceed_readings"], s["prev_exceeded"], s["event_count"]
+        del s["peak_hour_counts"]
+
+        # Lokasyon zenginleştirme
+        store_info = store_loc_map.get(s["store_id"], {})
+        dist = dist_map.get(store_info.get("district_id", ""), {})
+        city = city_map.get(dist.get("city_id", ""), {})
+        region = region_map.get(city.get("region_id", ""), {})
+        s["district_name"] = dist.get("name", "")
+        s["city_name"] = city.get("name", "")
+        s["region_name"] = region.get("name", "")
     
+    # Eşik ve durum belirle
+    for s in stores:
+        threshold = threshold_map_pre.get(s["store_id"], 5)
+        avg_q = s.get("avg_queue_length", 0)
+        s["queue_threshold"] = threshold
+        # Durum: ortalama kuyruk (aktifken) eşiğe göre
+        s["status"] = "critical" if avg_q >= threshold * 1.5 else "warning" if avg_q >= threshold else "normal"
+        # Eşik aşım yorumu
+        s["exceed_note"] = (
+            f"{s['exceed_event_count']} kez eşik aşıldı ({s['exceed_duration']})"
+            if s['exceed_event_count'] > 0 else "Eşik aşılmadı"
+        )
+
+    total_events = sum(s.get("exceed_event_count", 0) for s in stores)
+    total_exceed_min = sum(s.get("exceed_minutes_total", 0) for s in stores)
+    max_queue = max([s["max_queue_length"] for s in stores]) if stores else 0
+    avg_active = round(sum(s.get("avg_queue_length", 0) for s in stores if s.get("avg_queue_length", 0) > 0)
+                       / max(1, len([s for s in stores if s.get("avg_queue_length", 0) > 0])), 1) if stores else 0
+
     return {
         "report_type": "queue",
         "date_range": date_range,
@@ -553,8 +654,14 @@ async def get_queue_report(
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "summary": {
             "total_stores": len(stores),
-            "max_queue": max([s["max_queue_length"] for s in stores]) if stores else 0,
-            "avg_queue": round(sum([s["avg_queue_length"] for s in stores]) / len(stores), 1) if stores else 0
+            "total_queue_length": max_queue,         # Toplam değil, maksimum daha anlamlı
+            "avg_queue_per_store": avg_active,        # Sadece aktif anlardaki ortalama
+            "max_queue": max_queue,
+            "total_exceed_events": total_events,      # Kaç kez eşik aşıldı (olay)
+            "total_exceed_hours": round(total_exceed_min / 60, 1),  # Toplam eşik aşım süresi
+            "stores_critical": len([s for s in stores if s.get("status") == "critical"]),
+            "stores_warning": len([s for s in stores if s.get("status") == "warning"]),
+            "stores_normal": len([s for s in stores if s.get("status") == "normal"])
         },
         "stores": stores,
         "data_source": "local_warehouse"
@@ -674,15 +781,41 @@ async def get_store_comparison(
     elif date_range in ("1m", "30d"):
         start_date = (now - timedelta(days=30)).strftime("%Y-%m-%d")
         end_date = today
+    elif date_range == "1y":
+        start_date = (now - timedelta(days=365)).strftime("%Y-%m-%d")
+        end_date = today
     else:
         start_date = end_date = today
-    
+
     # Get data from daily_reports
     dr_query = {"date": {"$gte": start_date, "$lte": end_date}}
     if filtered_ids:
         dr_query["store_id"] = {"$in": filtered_ids}
     daily_docs = await db.daily_reports.find(dr_query, {"_id": 0}).to_list(10000)
     logger.info(f"Store comparison: Found {len(daily_docs)} daily reports")
+
+    # daily_reports henüz oluşmamışsa counter_snapshots'tan fallback
+    if not daily_docs:
+        snap_query = {"date": {"$gte": start_date, "$lte": end_date}}
+        if filtered_ids:
+            snap_query["store_id"] = {"$in": filtered_ids}
+        snaps = await db.counter_snapshots.find(snap_query, {"_id": 0}).to_list(10000)
+        logger.info(f"Store comparison fallback: Found {len(snaps)} counter snapshots")
+        # Snapshot'ları daily_reports formatına dönüştür
+        daily_docs = []
+        for snap in snaps:
+            daily_docs.append({
+                "store_id": snap.get("store_id"),
+                "store_name": snap.get("store_name", ""),
+                "date": snap.get("date"),
+                "counter": {
+                    "total_in": snap.get("total_in", 0),
+                    "total_out": snap.get("total_out", 0),
+                },
+                "queue": {"avg_queue_length": 0, "max_queue_length": 0},
+                "fr_analytics": {"total_male": 0, "total_female": 0, "total_visitors": 0}
+            })
+
     if not daily_docs:
         return {
             "report_type": "store_comparison",

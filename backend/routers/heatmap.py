@@ -611,3 +611,210 @@ async def export_heatmap_pdf(request: HeatmapRequest):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"PDF oluşturma hatası: {str(e)}")
+
+
+# ====================================================================
+# YENİ: Floor plan olmadan çalışan yoğunluk analizi
+# ====================================================================
+
+import math
+
+@router.get("/density/time-matrix")
+async def get_time_density_matrix(
+    store_id: Optional[str] = Query(None),
+    data_type: str = Query("counter", description="counter | queue"),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+):
+    """
+    Mağaza × Saat yoğunluk matrisi.
+    Floor plan gerekmez. Hangi mağazanın hangi saatte ne kadar yoğun olduğunu gösterir.
+    data_type=counter → doluluk yüzdesi
+    data_type=queue → kuyruk uzunluğu
+    """
+    now = datetime.now(timezone.utc)
+    start = date_from or (now - timedelta(days=7)).strftime("%Y-%m-%d")
+    end = date_to or now.strftime("%Y-%m-%d")
+
+    col = "counter_snapshots" if data_type == "counter" else "queue_snapshots"
+    value_field = "occupancy_percent" if data_type == "counter" else "total_queue_length"
+
+    match = {"date": {"$gte": start, "$lte": end}}
+    if store_id:
+        match["store_id"] = store_id
+
+    pipeline = [
+        {"$match": match},
+        {"$group": {
+            "_id": {"store_id": "$store_id", "store_name": "$store_name", "hour": "$hour"},
+            "avg_val": {"$avg": f"${value_field}"},
+            "max_val": {"$max": f"${value_field}"},
+            "count": {"$sum": 1}
+        }},
+        {"$sort": {"_id.store_id": 1, "_id.hour": 1}}
+    ]
+    results = await db[col].aggregate(pipeline).to_list(10000)
+
+    # Mağazaları ve saatleri grupla
+    stores_map = {}
+    for r in results:
+        sid = r["_id"]["store_id"]
+        sname = r["_id"]["store_name"]
+        hour = r["_id"]["hour"]
+        if sid not in stores_map:
+            stores_map[sid] = {"store_id": sid, "store_name": sname, "hours": {}}
+        stores_map[sid]["hours"][hour] = {
+            "avg": round(r["avg_val"] or 0, 1),
+            "max": round(r["max_val"] or 0, 1)
+        }
+
+    # 0-23 saat için tüm mağazaları doldur
+    stores_list = []
+    global_max = 0
+    for sid, s in stores_map.items():
+        row = {"store_id": sid, "store_name": s["store_name"], "hourly": []}
+        for h in range(24):
+            val = s["hours"].get(h, {}).get("avg", 0)
+            global_max = max(global_max, val)
+            row["hourly"].append({"hour": h, "label": f"{str(h).zfill(2)}:00", "value": val})
+        # Peak saat
+        peak = max(row["hourly"], key=lambda x: x["value"])
+        row["peak_hour"] = peak["label"]
+        row["peak_value"] = peak["value"]
+        stores_list.append(row)
+
+    return {
+        "data_type": data_type,
+        "value_label": "Doluluk %" if data_type == "counter" else "Kuyruk Uzunluğu",
+        "start_date": start, "end_date": end,
+        "global_max": global_max,
+        "stores": stores_list
+    }
+
+
+@router.get("/density/gaussian/{store_id}")
+async def get_gaussian_density(
+    store_id: str,
+    data_type: str = Query("queue", description="counter | queue"),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    grid_cols: int = Query(20, description="Izgara sütun sayısı"),
+    grid_rows: int = Query(15, description="Izgara satır sayısı"),
+):
+    """
+    Kamera pozisyonlarından Gaussian dağılım ile yoğunluk matrisi.
+    Her kameranın etki alanı 2D Gauss fonksiyonuyla hesaplanır.
+    Kişilerin TOPLANDIKLARI (geçiş değil) yerleri gösterir.
+
+    Formül: density(x,y) = Σ_i [ value_i × exp(-((x-xi)²+(y-yi)²) / (2σ²)) ]
+    """
+    now = datetime.now(timezone.utc)
+    start = date_from or now.strftime("%Y-%m-%d")
+    end = date_to or now.strftime("%Y-%m-%d")
+
+    # Kameraları al: önce store_id ile dene, yoksa floor_id üzerinden bul
+    type_filter = {"type": data_type} if data_type in ("counter", "queue") else {}
+    cameras = await db.cameras.find({"store_id": store_id, **type_filter}, {"_id": 0}).to_list(100)
+
+    if not cameras:
+        # store_id boş olabilir — floor_id → store_id yoluyla bul
+        floors = await db.floors.find({"store_id": store_id}, {"_id": 0, "id": 1}).to_list(50)
+        floor_ids = [f["id"] for f in floors]
+        if floor_ids:
+            cam_filter_alt = {"floor_id": {"$in": floor_ids}, **type_filter}
+            cameras = await db.cameras.find(cam_filter_alt, {"_id": 0}).to_list(100)
+
+    if not cameras:
+        return {"grid": [], "grid_cols": grid_cols, "grid_rows": grid_rows,
+                "message": "Bu mağazada kamera bulunamadı"}
+
+    # Snapshot verisini al
+    match = {"store_id": store_id, "date": {"$gte": start, "$lte": end}}
+
+    if data_type == "counter":
+        pipeline = [
+            {"$match": match},
+            {"$unwind": {"path": "$camera_details", "preserveNullAndEmptyArrays": False}},
+            {"$group": {
+                "_id": "$camera_details.camera_id",
+                "avg_val": {"$avg": "$camera_details.in_count"},
+                "max_val": {"$max": "$camera_details.in_count"}
+            }}
+        ]
+        cam_data = await db.counter_snapshots.aggregate(pipeline).to_list(500)
+    else:
+        # queue_snapshots → zone_details[].queue_length per camera
+        pipeline = [
+            {"$match": match},
+            {"$unwind": {"path": "$zone_details", "preserveNullAndEmptyArrays": False}},
+            {"$group": {
+                "_id": "$zone_details.camera_id",
+                "avg_val": {"$avg": "$zone_details.queue_length"},
+                "max_val": {"$max": "$zone_details.queue_length"}
+            }}
+        ]
+        cam_data = await db.queue_snapshots.aggregate(pipeline).to_list(500)
+
+    cam_values = {r["_id"]: r["avg_val"] or 0 for r in cam_data}
+
+    # Kat boyutlarını al (metre → yüzde dönüşümü için)
+    floor_dim_cache = {}
+    for cam in cameras:
+        fid = cam.get("floor_id")
+        if fid and fid not in floor_dim_cache:
+            fl = await db.floors.find_one({"id": fid}, {"_id": 0, "width_meters": 1, "height_meters": 1})
+            floor_dim_cache[fid] = fl or {}
+
+    # Gaussian ızgara hesapla
+    grid = [[0.0] * grid_cols for _ in range(grid_rows)]
+    active_cams = []
+    has_real_positions = False
+
+    for cam in cameras:
+        cam_id = cam.get("camera_vms_id") or cam.get("id")
+        val = cam_values.get(cam_id, 0)
+        if val <= 0:
+            continue
+
+        # Pozisyon: kamera koleksiyonundaki position_x/position_y (metre cinsinden)
+        pos_x = cam.get("position_x")
+        pos_y = cam.get("position_y")
+
+        if pos_x is not None and pos_y is not None:
+            fid = cam.get("floor_id")
+            fl = floor_dim_cache.get(fid, {})
+            w = fl.get("width_meters") or 50
+            h = fl.get("height_meters") or 30
+            x_pct = min(100, max(0, (pos_x / w) * 100))
+            y_pct = min(100, max(0, (pos_y / h) * 100))
+            has_real_positions = True
+        else:
+            x_pct, y_pct = 50.0, 50.0
+
+        cx = (x_pct / 100) * grid_cols
+        cy = (y_pct / 100) * grid_rows
+        sigma = max(grid_cols, grid_rows) * 0.15  # Etki yarıçapı
+
+        for row in range(grid_rows):
+            for col_idx in range(grid_cols):
+                dist_sq = (col_idx - cx) ** 2 + (row - cy) ** 2
+                gauss = math.exp(-dist_sq / (2 * sigma * sigma))
+                grid[row][col_idx] += val * gauss
+
+        active_cams.append({"camera_id": cam_id, "name": cam.get("name", ""), "value": val, "x_pct": round(x_pct, 1), "y_pct": round(y_pct, 1)})
+
+    # Normalize 0-100
+    max_val = max(max(row) for row in grid) if any(any(row) for row in grid) else 1
+    if max_val > 0:
+        grid = [[round(v / max_val * 100, 1) for v in row] for row in grid]
+
+    return {
+        "store_id": store_id,
+        "data_type": data_type,
+        "start_date": start, "end_date": end,
+        "grid_cols": grid_cols, "grid_rows": grid_rows,
+        "grid": grid,
+        "active_cameras": active_cams,
+        "has_positions": has_real_positions,
+        "note": None if has_real_positions else "Kameralar kat planına yerleştirilmemiş — tüm kameralar merkeze konumlandırıldı"
+    }

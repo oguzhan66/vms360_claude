@@ -1,4 +1,5 @@
-import { ListOrdered, MapPin, AlertTriangle, CheckCircle } from 'lucide-react';
+import { useState } from 'react';
+import { ListOrdered, MapPin, AlertTriangle, CheckCircle, ChevronDown, ChevronUp } from 'lucide-react';
 
 const isHexId = (name) => !name || /^[0-9a-f-]{6,}$/i.test(name.trim());
 const formatZoneName = (cameraName, zoneIndex) => {
@@ -7,6 +8,8 @@ const formatZoneName = (cameraName, zoneIndex) => {
 };
 
 export const QueueCard = ({ data }) => {
+  const [showEmpty, setShowEmpty] = useState(false);
+
   const statusColor = {
     critical: { dot: 'critical', border: 'status-critical', text: 'text-red-400', bar: 'bg-red-500', badge: 'bg-red-500/15 text-red-400' },
     warning:  { dot: 'warning',  border: 'status-warning',  text: 'text-amber-400', bar: 'bg-amber-500', badge: 'bg-amber-500/15 text-amber-400' },
@@ -17,12 +20,15 @@ export const QueueCard = ({ data }) => {
   const total = data.total_queue_length || 0;
   const barPercent = Math.min(100, (total / (threshold * 2)) * 100);
 
-  const activeZones = (data.zones || []).filter(z => z.queue_length > 0).length;
-  const totalZones = (data.zones || []).length;
+  const zones = data.zones || [];
+  const activeZones = zones.filter(z => z.queue_length > 0);
+  const emptyZones = zones.filter(z => z.queue_length === 0);
+  const totalZones = zones.length;
+
   const kasaLabel = totalZones === 0 ? null
-    : activeZones === 0 ? `${totalZones} kasanın tamamı boş`
-    : activeZones === totalZones ? `${activeZones} kasanın tamamında kuyruk var`
-    : `${activeZones}/${totalZones} kasada kuyruk var`;
+    : activeZones.length === 0 ? `${totalZones} kasanın tamamı boş`
+    : activeZones.length === totalZones ? `${activeZones.length} kasanın tamamında kuyruk var`
+    : `${activeZones.length}/${totalZones} kasada kuyruk var`;
 
   const statusLabel = { critical: 'Kritik', warning: 'Uyarı', normal: 'Normal' }[data.status] || 'Normal';
 
@@ -54,7 +60,7 @@ export const QueueCard = ({ data }) => {
         <div className="text-right text-xs text-muted-foreground">
           <div>Eşik: <span className="font-mono font-semibold text-foreground">{threshold}</span></div>
           {kasaLabel && (
-            <div className={`mt-1 font-medium ${activeZones > 0 ? statusColor.text : 'text-emerald-400'}`}>
+            <div className={`mt-1 font-medium ${activeZones.length > 0 ? statusColor.text : 'text-emerald-400'}`}>
               {kasaLabel}
             </div>
           )}
@@ -71,7 +77,7 @@ export const QueueCard = ({ data }) => {
         </div>
         <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
           <span>0</span>
-          <span className="text-muted-foreground">eşik: {threshold}</span>
+          <span>eşik: {threshold}</span>
           <span>{threshold * 2}</span>
         </div>
       </div>
@@ -79,24 +85,59 @@ export const QueueCard = ({ data }) => {
       {/* Kasa detayları */}
       {totalZones > 0 && (
         <div className="mt-3 pt-3 border-t border-white/5">
-          <div className="text-xs text-muted-foreground mb-2">Kasa Detayı</div>
-          <div className="grid grid-cols-2 gap-1.5">
-            {data.zones.map((zone, idx) => (
-              <div
-                key={idx}
-                className={`flex items-center justify-between px-2 py-1.5 rounded ${
-                  zone.queue_length > 0 ? 'bg-amber-500/10 border border-amber-500/20' : 'bg-white/5'
-                }`}
-              >
-                <span className="text-xs text-muted-foreground truncate">
-                  {formatZoneName(zone.camera_name, idx)}
-                </span>
-                <span className={`font-mono text-sm font-bold ml-2 ${zone.queue_length > 0 ? 'text-amber-400' : 'text-muted-foreground'}`}>
-                  {zone.queue_length}
-                </span>
-              </div>
-            ))}
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-xs text-muted-foreground">Kasa Detayı</div>
+            <div className="text-[10px] text-muted-foreground">{totalZones} kasa</div>
           </div>
+
+          {/* Aktif kasalar (kuyruklu) — her zaman göster */}
+          {activeZones.length > 0 && (
+            <div className="space-y-1 mb-2">
+              {activeZones.map((zone, i) => {
+                const origIdx = zones.indexOf(zone);
+                const name = formatZoneName(zone.camera_name, origIdx);
+                const pct = Math.min(100, (zone.queue_length / (threshold * 2)) * 100);
+                return (
+                  <div key={i} className="flex items-center gap-2 px-2 py-1.5 rounded bg-amber-500/10 border border-amber-500/20">
+                    <span className="text-xs text-muted-foreground truncate flex-1" title={name}>{name}</span>
+                    <div className="flex items-center gap-2">
+                      <div className="w-16 h-1 bg-white/10 rounded-full overflow-hidden">
+                        <div className="h-full bg-amber-500 rounded-full" style={{ width: `${pct}%` }} />
+                      </div>
+                      <span className="font-mono text-sm font-bold text-amber-400 w-4 text-right">{zone.queue_length}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Boş kasalar — collapse edilebilir */}
+          {emptyZones.length > 0 && (
+            <div>
+              <button
+                onClick={() => setShowEmpty(v => !v)}
+                className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors w-full"
+              >
+                {showEmpty ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                {showEmpty ? 'Boş kasaları gizle' : `${emptyZones.length} boş kasa`}
+              </button>
+              {showEmpty && (
+                <div className="mt-1 max-h-32 overflow-y-auto space-y-1 pr-0.5">
+                  {emptyZones.map((zone, i) => {
+                    const origIdx = zones.indexOf(zone);
+                    const name = formatZoneName(zone.camera_name, origIdx);
+                    return (
+                      <div key={i} className="flex items-center justify-between px-2 py-1 rounded bg-white/5">
+                        <span className="text-xs text-muted-foreground truncate" title={name}>{name}</span>
+                        <span className="font-mono text-xs text-muted-foreground ml-2">0</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 

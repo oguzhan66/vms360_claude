@@ -2,9 +2,13 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies + Turkish font support
 RUN apt-get update && apt-get install -y \
     build-essential \
+    fonts-dejavu-core \
+    fonts-liberation \
+    fontconfig \
+    && fc-cache -fv \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching

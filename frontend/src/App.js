@@ -21,6 +21,8 @@ import UsersPage from "./pages/UsersPage";
 import SettingsPage from "./pages/SettingsPage";
 import FloorPlansPage from "./pages/FloorPlansPage";
 import HeatmapPage from "./pages/HeatmapPage";
+import DensityHeatmapPage from "./pages/DensityHeatmapPage";
+import AlertsReportPage from "./pages/AlertsReportPage";
 
 // Protected Route Component
 const ProtectedRoute = ({ children, adminOnly = false }) => {
@@ -153,6 +155,16 @@ function AppRoutes() {
       <Route path="/heatmap" element={
         <ProtectedRoute>
           <HeatmapPage />
+        </ProtectedRoute>
+      } />
+      <Route path="/density" element={
+        <ProtectedRoute>
+          <DensityHeatmapPage />
+        </ProtectedRoute>
+      } />
+      <Route path="/alerts" element={
+        <ProtectedRoute>
+          <AlertsReportPage />
         </ProtectedRoute>
       } />
 

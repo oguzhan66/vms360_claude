@@ -102,6 +102,7 @@ from routers.scheduled_reports import router as scheduled_reports_router
 from routers.local_data import router as local_data_router
 from routers.floors import router as floors_router
 from routers.heatmap import router as heatmap_router
+from routers.alerts import router as alerts_router
 
 # Include routers - LOCAL DATA ROUTER FIRST (takes precedence for live/reports endpoints)
 # All data now comes from local MongoDB warehouse, not live VMS
@@ -118,6 +119,7 @@ api_router.include_router(historical_router)
 # api_router.include_router(scheduled_reports_router)
 api_router.include_router(floors_router)
 api_router.include_router(heatmap_router)
+api_router.include_router(alerts_router)
 # Note: VMS is now only used by data_collector.py for background data collection
 
 # Configure logging
@@ -5018,28 +5020,72 @@ async def generate_report_data(report_type: str, filters: dict = None):
         
         return {"type": "Demografik Analiz", "data": demo_data}
     
+    # ========== UYARI RAPORU (Alerts Report) ==========
+    elif report_type == "alerts_report":
+        now = datetime.now(timezone.utc)
+        dr = filters.get("date_range", "1d")
+        days = {"1d": 1, "7d": 7, "30d": 30}.get(dr, 1)
+        from datetime import timedelta as _td
+        date_from = (now - _td(days=days)).strftime("%Y-%m-%d")
+        date_to = now.strftime("%Y-%m-%d")
+
+        filt: dict = {"date": {"$gte": date_from, "$lte": date_to}}
+        if store_ids:
+            filt["store_id"] = {"$in": store_ids}
+
+        docs = await db.alerts.find(filt, {"_id": 0}).sort("started_at", -1).to_list(5000)
+
+        type_tr  = {"counter": "Kişi Sayma", "queue": "Kuyruk"}
+        level_tr = {"critical": "Kritik", "warning": "Uyarı"}
+
+        alert_data = []
+        for d in docs:
+            alert_data.append({
+                "Mağaza":      d.get("store_name", ""),
+                "Tür":         type_tr.get(d.get("alert_type", ""), d.get("alert_type", "")),
+                "Seviye":      level_tr.get(d.get("level", ""), d.get("level", "")),
+                "Başlangıç":   (d.get("started_at") or "")[:16].replace("T", " "),
+                "Bitiş":       (d.get("cleared_at") or "—")[:16].replace("T", " "),
+                "Süre (dk)":   d.get("duration_minutes", "—"),
+                "Maks. Değer": d.get("peak_value", "—"),
+                "Eşik":        d.get("threshold") or d.get("threshold_percent") or "—",
+                "Durum":       "Aktif" if not d.get("cleared_at") else "Kapandı",
+            })
+
+        total    = len(alert_data)
+        critical = sum(1 for d in docs if d.get("level") == "critical")
+        warning  = sum(1 for d in docs if d.get("level") == "warning")
+        active   = sum(1 for d in docs if not d.get("cleared_at"))
+
+        return {
+            "type": "Uyarı Raporu",
+            "data": alert_data,
+            "summary": {
+                "total": total, "critical": critical,
+                "warning": warning, "active": active,
+                "date_from": date_from, "date_to": date_to,
+            },
+        }
+
     # ========== ALL REPORTS (Tüm Raporlar) ==========
     else:  # all
         all_data = []
-        
-        # Kişi Sayma
+
         counter = await generate_report_data("counter", filters)
         for item in counter.get("data", []):
             item["Rapor Tipi"] = "Kişi Sayma"
             all_data.append(item)
-        
-        # Kuyruk
+
         queue = await generate_report_data("queue", filters)
         for item in queue.get("data", []):
             item["Rapor Tipi"] = "Kuyruk Analizi"
             all_data.append(item)
-        
-        # Yaş/Cinsiyet
+
         analytics = await generate_report_data("analytics", filters)
         for item in analytics.get("data", []):
             item["Rapor Tipi"] = "Yaş/Cinsiyet"
             all_data.append(item)
-        
+
         return {"type": "Tüm Raporlar", "data": all_data}
 
 async def send_scheduled_report(report: dict, smtp_settings: dict):
@@ -5075,16 +5121,64 @@ async def send_scheduled_report(report: dict, smtp_settings: dict):
         msg['To'] = ", ".join(report['recipients'])
         msg['Subject'] = f"VMS360 - {report['name']} ({datetime.now().strftime('%d.%m.%Y')})"
         
-        # Email body
+        # Email body — alerts tipi için özet tablo ekle
+        summary = report_data.get("summary", {})
+        alerts_summary_html = ""
+        if report.get("report_type") == "alerts_report" and summary:
+            rows = ""
+            for d in report_data.get("data", [])[:20]:
+                bg = "#fff0f0" if d.get("Seviye") == "Kritik" else "#fffbea"
+                rows += (f"<tr style='background:{bg}'>"
+                         f"<td style='padding:4px 8px;border:1px solid #eee'>{d.get('Mağaza','')}</td>"
+                         f"<td style='padding:4px 8px;border:1px solid #eee'>{d.get('Tür','')}</td>"
+                         f"<td style='padding:4px 8px;border:1px solid #eee;font-weight:bold'>{d.get('Seviye','')}</td>"
+                         f"<td style='padding:4px 8px;border:1px solid #eee'>{d.get('Başlangıç','')}</td>"
+                         f"<td style='padding:4px 8px;border:1px solid #eee'>{d.get('Süre (dk)','—')} dk</td>"
+                         f"<td style='padding:4px 8px;border:1px solid #eee'>{d.get('Durum','')}</td>"
+                         f"</tr>")
+            alerts_summary_html = f"""
+            <div style="margin:16px 0;padding:12px;background:#fafafa;border-radius:6px">
+              <table style="width:100%;border-collapse:collapse;font-size:12px">
+                <tr style="background:#2d3748;color:#fff">
+                  <th style="padding:6px 8px;text-align:left">Toplam</th>
+                  <th style="padding:6px 8px;text-align:left">Kritik</th>
+                  <th style="padding:6px 8px;text-align:left">Uyarı</th>
+                  <th style="padding:6px 8px;text-align:left">Aktif</th>
+                  <th style="padding:6px 8px;text-align:left">Dönem</th>
+                </tr>
+                <tr style="font-size:18px;font-weight:bold;text-align:center">
+                  <td style="padding:8px">{summary.get('total',0)}</td>
+                  <td style="padding:8px;color:#c53030">{summary.get('critical',0)}</td>
+                  <td style="padding:8px;color:#d69e2e">{summary.get('warning',0)}</td>
+                  <td style="padding:8px;color:#e53e3e">{summary.get('active',0)}</td>
+                  <td style="padding:8px;font-size:12px">{summary.get('date_from','')} – {summary.get('date_to','')}</td>
+                </tr>
+              </table>
+            </div>
+            <table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:8px">
+              <tr style="background:#4a5568;color:#fff">
+                <th style="padding:5px 8px;text-align:left">Mağaza</th>
+                <th style="padding:5px 8px;text-align:left">Tür</th>
+                <th style="padding:5px 8px;text-align:left">Seviye</th>
+                <th style="padding:5px 8px;text-align:left">Başlangıç</th>
+                <th style="padding:5px 8px;text-align:left">Süre</th>
+                <th style="padding:5px 8px;text-align:left">Durum</th>
+              </tr>
+              {rows}
+            </table>
+            {'<p style="color:#888;font-size:11px;margin-top:4px">İlk 20 kayıt; tamamı ekte.</p>' if len(report_data.get('data',[])) > 20 else ''}
+            """
+
         body = f"""
         <html>
         <body style="font-family: Arial, sans-serif; padding: 20px; background: #f9fafb;">
-            <div style="max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px;">
+            <div style="max-width: 680px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px;">
                 <h2 style="color: #3B82F6; margin-bottom: 20px;">VMS360 Retail Panel</h2>
                 <h3 style="color: #1F2937;">{report['name']}</h3>
                 <p style="color: #6B7280;">Rapor Tipi: <strong>{report_data['type']}</strong></p>
                 <p style="color: #6B7280;">Tarih: <strong>{datetime.now().strftime('%d.%m.%Y %H:%M')}</strong></p>
                 <hr style="border: 1px solid #E5E7EB; margin: 20px 0;">
+                {alerts_summary_html}
                 <p style="color: #6B7280;">Rapor dosyası ekte yer almaktadır.</p>
                 <p style="color: #9CA3AF; font-size: 12px; margin-top: 30px;">
                     Bu e-posta VMS360 Retail Panel planlı rapor sistemi tarafından otomatik olarak gönderilmiştir.

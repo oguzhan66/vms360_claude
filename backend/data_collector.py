@@ -244,10 +244,20 @@ async def collect_counter_snapshot():
             result = await db.counter_snapshots.bulk_write(operations, ordered=False)
             logger.info(f"Saved {len(snapshots)} counter snapshots at {timestamp.isoformat()} (upserted: {result.upserted_count}, modified: {result.modified_count})")
             
-            # Update health status for each store
+            # Update health status for each store + alert kontrolü
+            from alert_manager import process_counter_alert
             for snap in snapshots:
                 await update_store_health(snap["store_id"], "counter")
-        
+                await process_counter_alert(
+                    store_id=snap["store_id"],
+                    store_name=snap["store_name"],
+                    status=snap.get("status", "normal"),
+                    occupancy_percent=snap.get("occupancy_percent", 0),
+                    current_visitors=snap.get("current_visitors", 0),
+                    capacity=snap.get("capacity", 100),
+                    timestamp=timestamp
+                )
+
         return snapshots
     except Exception as e:
         logger.error(f"Error collecting counter snapshot: {e}")
@@ -369,9 +379,18 @@ async def collect_queue_snapshot():
             result = await db.queue_snapshots.bulk_write(operations, ordered=False)
             logger.info(f"Saved {len(snapshots)} queue snapshots at {timestamp.isoformat()} (upserted: {result.upserted_count}, modified: {result.modified_count})")
             
-            # Update health status for each store
+            # Update health status for each store + alert kontrolü
+            from alert_manager import process_queue_alert
             for snap in snapshots:
                 await update_store_health(snap["store_id"], "queue")
+                await process_queue_alert(
+                    store_id=snap["store_id"],
+                    store_name=snap["store_name"],
+                    status=snap.get("status", "normal"),
+                    total_queue=snap.get("total_queue_length", 0),
+                    threshold=snap.get("queue_threshold", 5),
+                    timestamp=timestamp
+                )
         
         return snapshots
     except Exception as e:

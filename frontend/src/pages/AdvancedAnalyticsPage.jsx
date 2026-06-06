@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Layout } from '../components/Layout';
 import { 
   TrendingUp, TrendingDown, Users, Clock, BarChart3, 
@@ -21,6 +21,7 @@ import {
   DropdownMenuTrigger 
 } from '../components/ui/dropdown-menu';
 import api, { locationApi, storeApi } from '../services/api';
+import { AlertPanel } from '../components/AlertPanel';
 import { toast } from 'sonner';
 
 const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899'];
@@ -943,6 +944,8 @@ const AdvancedAnalyticsPage = () => {
                 </div>
               </CardContent>
             </Card>
+            {/* Kişi Sayma Uyarı Geçmişi */}
+            <AlertTimeline alertType="counter" dateFrom={dateFrom} dateTo={dateTo} />
           </TabsContent>
 
           {/* QUEUE TAB */}
@@ -1018,10 +1021,100 @@ const AdvancedAnalyticsPage = () => {
                 </Card>
               ))}
             </div>
+
+            {/* Kuyruk Uyarı Geçmişi */}
+            <AlertTimeline alertType="queue" dateFrom={dateFrom} dateTo={dateTo} />
           </TabsContent>
         </Tabs>
       </div>
     </Layout>
+  );
+};
+
+// Alert Timeline Component — Gelişmiş Analitik'te kullanılır
+const AlertTimeline = ({ alertType, dateFrom, dateTo }) => {
+  const [stats, setStats] = useState(null);
+  const [showPanel, setShowPanel] = useState(false);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const params = new URLSearchParams();
+        if (dateFrom) params.append('date_from', dateFrom);
+        if (dateTo) params.append('date_to', dateTo);
+        params.append('alert_type', alertType);
+        const res = await api.get(`/alerts/stats?${params}`);
+        setStats(res.data);
+      } catch {}
+    };
+    load();
+  }, [alertType, dateFrom, dateTo]);
+
+  if (!stats || stats.total_alerts === 0) return null;
+
+  const typeLabel = alertType === 'counter' ? 'Kişi Sayma' : 'Kuyruk';
+  const hourlyData = Array.from({ length: 24 }, (_, h) => {
+    const items = (stats.hourly_distribution || []).filter(x => x.hour === h);
+    return {
+      hour: `${String(h).padStart(2,'0')}`,
+      critical: items.find(x => x.level === 'critical')?.count || 0,
+      warning: items.find(x => x.level === 'warning')?.count || 0,
+    };
+  });
+
+  return (
+    <Card className="bg-card/50 border-white/10">
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-400" />
+            {typeLabel} Uyarı Geçmişi
+            <span className="px-2 py-0.5 bg-amber-500/20 text-amber-400 text-xs rounded-full">
+              {stats.total_alerts} uyarı
+            </span>
+          </CardTitle>
+          <button onClick={() => setShowPanel(true)}
+            className="text-xs px-3 py-1 bg-primary/20 text-primary rounded hover:bg-primary/30">
+            Detay & Rapor →
+          </button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-3 gap-3 mb-3 text-center text-sm">
+          <div className="p-2 bg-secondary/30 rounded">
+            <div className="font-mono font-bold">{stats.total_alerts}</div>
+            <div className="text-xs text-muted-foreground">Toplam</div>
+          </div>
+          <div className="p-2 bg-red-500/10 rounded">
+            <div className="font-mono font-bold text-red-400">
+              {stats.daily_summary?.reduce((s, d) => s + d.critical, 0) || 0}
+            </div>
+            <div className="text-xs text-muted-foreground">Kritik</div>
+          </div>
+          <div className="p-2 bg-amber-500/10 rounded">
+            <div className="font-mono font-bold text-amber-400">
+              {stats.daily_summary?.reduce((s, d) => s + (d.avg_duration || 0), 0)
+                ? `${Math.round(stats.daily_summary.reduce((s, d) => s + (d.avg_duration || 0), 0) / stats.daily_summary.filter(d => d.avg_duration).length)} dk`
+                : '—'}
+            </div>
+            <div className="text-xs text-muted-foreground">Ort. Süre</div>
+          </div>
+        </div>
+        <div className="h-24">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={hourlyData}>
+              <XAxis dataKey="hour" tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 9 }} interval={3} />
+              <YAxis tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 9 }} />
+              <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', fontSize: '11px' }} />
+              <Bar dataKey="critical" stackId="a" fill="#EF4444" name="Kritik" />
+              <Bar dataKey="warning" stackId="a" fill="#F59E0B" name="Uyarı" radius={[2,2,0,0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+        <p className="text-xs text-muted-foreground mt-1 text-center">Günün saatlerine göre uyarı dağılımı</p>
+      </CardContent>
+      {showPanel && <AlertPanel onClose={() => setShowPanel(false)} />}
+    </Card>
   );
 };
 

@@ -17,6 +17,7 @@ import { toast } from 'sonner';
 const REPORT_TYPES = [
   { id: 'counter', label: 'Kişi Sayma', description: 'Mağaza bazlı giriş/çıkış verileri' },
   { id: 'queue', label: 'Kuyruk Raporu', description: 'Kuyruk uzunlukları ve durumları' },
+  { id: 'alerts_report', label: 'Uyarı Raporu', description: 'Kritik & uyarı seviyesi olayların özeti' },
   { id: 'analytics', label: 'Yaş/Cinsiyet Analizi', description: 'Demografik veriler' },
   { id: 'hourly_traffic', label: 'Saatlik Trafik', description: 'Saatlik ziyaretçi dağılımı' },
   { id: 'weekday_comparison', label: 'Haftalık Karşılaştırma', description: 'Son 7 gün karşılaştırması' },

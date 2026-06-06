@@ -19,6 +19,7 @@ import {
   Activity,
   Layers,
   ThermometerSun,
+  Bell,
   Menu,
   X
 } from 'lucide-react';
@@ -32,9 +33,11 @@ const allNavItems = [
   { path: '/queue', icon: ListOrdered, label: 'Kuyruk Analizi', roles: ['admin', 'operator'] },
   { path: '/analytics', icon: BarChart3, label: 'Yaş/Cinsiyet', roles: ['admin', 'operator'] },
   { path: '/heatmap', icon: ThermometerSun, label: 'Isı Haritası', roles: ['admin', 'operator'] },
+  { path: '/density', icon: ThermometerSun, label: 'Yoğunluk Analizi', roles: ['admin', 'operator'] },
   { path: '/reports', icon: FileText, label: 'Raporlar', roles: ['admin', 'operator'] },
   { path: '/advanced-reports', icon: TrendingUp, label: 'Gelişmiş Raporlar', roles: ['admin', 'operator'] },
   { path: '/advanced-analytics', icon: Activity, label: 'Gelişmiş Analitik', roles: ['admin', 'operator'] },
+  { path: '/alerts', icon: Bell, label: 'Uyarı Raporu', roles: ['admin', 'operator'] },
   { path: '/scheduled-reports', icon: CalendarClock, label: 'Planlı Raporlar', roles: ['admin'] },
   { path: '/vms', icon: Server, label: 'VMS Yönetimi', roles: ['admin'] },
   { path: '/stores', icon: Store, label: 'Mağazalar', roles: ['admin'] },

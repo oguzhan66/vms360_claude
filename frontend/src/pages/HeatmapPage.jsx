@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Layout } from '../components/Layout';
-import { heatmapApi, locationApi } from '../services/api';
+import api, { heatmapApi, locationApi } from '../services/api';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
@@ -52,6 +52,13 @@ const HeatmapPage = () => {
   const [useZoneMask, setUseZoneMask] = useState(false);
   const [showZoneBorders, setShowZoneBorders] = useState(true);
   
+  // Heatmap render modu: movement (hareketlilik) | density (yoğunluk)
+  const [heatmapMode, setHeatmapMode] = useState('movement'); // 'movement' | 'density'
+  const [densityType, setDensityType] = useState('counter');  // 'counter' | 'queue'
+  const [gaussianData, setGaussianData] = useState(null);
+  const [loadingDensity, setLoadingDensity] = useState(false);
+  const [floorPlanMeta, setFloorPlanMeta] = useState(null); // plan_image_data + boyutlar
+
   // Report generation mode (removed live mode)
   const [viewMode, setViewMode] = useState('report'); // 'report', 'compare'
   
@@ -308,6 +315,36 @@ const HeatmapPage = () => {
     }
   };
 
+  // Kat planı meta verisini yükle (plan_image_data + boyutlar)
+  const loadFloorPlanMeta = async (floorId) => {
+    try {
+      const res = await heatmapApi.getLive(floorId);
+      setFloorPlanMeta(res.data);
+    } catch (e) {
+      setFloorPlanMeta(null);
+    }
+  };
+
+  // Gaussian yoğunluk verisini yükle
+  const loadGaussianData = async (floorId, type, dFrom, dTo) => {
+    const store = storesWithFloors.find(s => s.floors.some(f => f.floor_id === floorId));
+    if (!store) return;
+    setLoadingDensity(true);
+    setGaussianData(null);
+    try {
+      const df = new Date(dFrom).toISOString().split('T')[0];
+      const dt = new Date(dTo).toISOString().split('T')[0];
+      const res = await api.get(
+        `/heatmap/density/gaussian/${store.store_id}?data_type=${type}&date_from=${df}&date_to=${dt}&grid_cols=30&grid_rows=20`
+      );
+      setGaussianData(res.data);
+    } catch (e) {
+      toast.error('Yoğunluk verisi yüklenemedi');
+    } finally {
+      setLoadingDensity(false);
+    }
+  };
+
   // Handle floor selection
   const handleFloorSelect = (floor) => {
     setShowAllFloors(false);
@@ -315,7 +352,9 @@ const HeatmapPage = () => {
     setReportData(null);
     setHeatmapData(null);
     setCompareData(null);
+    setGaussianData(null);
     setCurrentTimeIndex(0);
+    loadFloorPlanMeta(floor.floor_id);
   };
 
   // Load all floors data for multi-floor view
@@ -408,6 +447,118 @@ const HeatmapPage = () => {
     
     return `rgba(${r}, ${g}, ${b}, ${a})`;
   };
+
+  // Yoğunluk (Gaussian) canvas çizimi — kat planı üzerinde
+  const drawDensityCanvas = useCallback(() => {
+    if (!canvasRef.current) return;
+    const meta = floorPlanMeta || heatmapData;
+    if (!meta || !meta.width_meters) return;
+
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    const containerWidth = canvas.parentElement?.clientWidth || 800;
+    const aspectRatio = meta.height_meters / meta.width_meters;
+    canvas.width = containerWidth;
+    canvas.height = containerWidth * aspectRatio;
+
+    ctx.fillStyle = '#0f0f1a';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const doDrawDensity = () => {
+      if (showZoneBorders && meta.zones?.length > 0) {
+        drawZones(ctx, canvas.width / meta.width_meters);
+      }
+
+      if (gaussianData?.grid?.length > 0) {
+        const { grid, grid_cols, grid_rows, active_cameras } = gaussianData;
+        const cellW = canvas.width / grid_cols;
+        const cellH = canvas.height / grid_rows;
+        const opacityMult = heatmapOpacity / 100;
+
+        grid.forEach((row, ri) => {
+          row.forEach((val, ci) => {
+            if (val > 1) {
+              const norm = Math.pow(val / 100, 0.65);
+              ctx.fillStyle = getHeatColorSmooth(norm, opacityMult);
+              ctx.fillRect(ci * cellW, ri * cellH, cellW + 0.5, cellH + 0.5);
+            }
+          });
+        });
+
+        // Kamera işaretleri
+        const sorted = [...(active_cameras || [])].sort((a, b) => b.value - a.value);
+        sorted.forEach((cam, i) => {
+          const px = (cam.x_pct / 100) * canvas.width;
+          const py = (cam.y_pct / 100) * canvas.height;
+          const isTop = i === 0;
+          ctx.shadowColor = isTop ? '#f59e0b' : '#ffffff';
+          ctx.shadowBlur = 10;
+          ctx.fillStyle = isTop ? '#f59e0b' : '#4a9eff';
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(px, py, 9, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+
+          if (showCameraLabels) {
+            const label = cam.name.length > 16 ? cam.name.slice(0, 16) + '..' : cam.name;
+            ctx.font = 'bold 10px Arial';
+            const tw = ctx.measureText(label).width;
+            ctx.fillStyle = 'rgba(0,0,0,0.85)';
+            ctx.beginPath();
+            ctx.roundRect(px + 13, py - 9, tw + 8, 16, 3);
+            ctx.fill();
+            ctx.fillStyle = '#ffffff';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(label, px + 17, py);
+          }
+        });
+      } else {
+        // Veri yok mesajı
+        ctx.fillStyle = 'rgba(255,255,255,0.5)';
+        ctx.font = '14px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('Bu dönem için yoğunluk verisi bulunamadı', canvas.width / 2, canvas.height / 2);
+      }
+
+      drawLegend(ctx);
+
+      // Mod etiketi
+      ctx.fillStyle = densityType === 'queue' ? 'rgba(245,158,11,0.95)' : 'rgba(59,130,246,0.95)';
+      ctx.font = 'bold 11px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillText(
+        densityType === 'queue' ? '⬛ KUYRUK YOĞUNLUĞU' : '⬛ KİŞİ TOPLANMA YÜZDESİ',
+        20, 24
+      );
+    };
+
+    if (meta.plan_image_data) {
+      const img = new Image();
+      img.onload = () => {
+        ctx.globalAlpha = 0.7;
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        ctx.globalAlpha = 1;
+        doDrawDensity();
+      };
+      img.src = meta.plan_image_data;
+    } else {
+      drawGrid(ctx, canvas.width / meta.width_meters);
+      doDrawDensity();
+    }
+  }, [gaussianData, floorPlanMeta, heatmapData, heatmapOpacity, showZoneBorders, showCameraLabels, densityType]);
+
+  // Yoğunluk modu canvas'ı yeniden çiz
+  useEffect(() => {
+    if (heatmapMode === 'density') {
+      drawDensityCanvas();
+    }
+  }, [heatmapMode, gaussianData, drawDensityCanvas]);
 
   // Canvas drawing
   const drawHeatmap = useCallback(() => {
@@ -1490,11 +1641,98 @@ const HeatmapPage = () => {
                       )}
                     </div>
                     
+                    {/* Mod Seçici */}
+                    <div className="flex gap-2 mb-4">
+                      <button
+                        onClick={() => setHeatmapMode('movement')}
+                        className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium flex items-center justify-center gap-2 border transition-colors ${
+                          heatmapMode === 'movement'
+                            ? 'bg-blue-600 border-blue-500 text-white'
+                            : 'bg-secondary/30 border-white/10 text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        <ArrowRight className="w-4 h-4" />
+                        Hareketlilik
+                      </button>
+                      <button
+                        onClick={() => {
+                          setHeatmapMode('density');
+                          if (selectedFloor) loadGaussianData(selectedFloor.floor_id, densityType, dateFrom, dateTo);
+                        }}
+                        className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium flex items-center justify-center gap-2 border transition-colors ${
+                          heatmapMode === 'density'
+                            ? 'bg-orange-600 border-orange-500 text-white'
+                            : 'bg-secondary/30 border-white/10 text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        <ThermometerSun className="w-4 h-4" />
+                        Yoğunluk
+                      </button>
+                    </div>
+
+                    {/* Yoğunluk modu — veri tipi seçici */}
+                    {heatmapMode === 'density' && (
+                      <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg p-3 mb-4">
+                        <div className="text-xs text-orange-300 mb-2 font-medium">Yoğunluk Kaynağı</div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => {
+                              setDensityType('counter');
+                              if (selectedFloor) loadGaussianData(selectedFloor.floor_id, 'counter', dateFrom, dateTo);
+                            }}
+                            className={`flex-1 py-1.5 px-2 rounded text-xs font-medium border transition-colors ${
+                              densityType === 'counter'
+                                ? 'bg-blue-600 border-blue-500 text-white'
+                                : 'bg-secondary/30 border-white/10 text-muted-foreground hover:text-foreground'
+                            }`}
+                          >
+                            Kişi Sayma
+                          </button>
+                          <button
+                            onClick={() => {
+                              setDensityType('queue');
+                              if (selectedFloor) loadGaussianData(selectedFloor.floor_id, 'queue', dateFrom, dateTo);
+                            }}
+                            className={`flex-1 py-1.5 px-2 rounded text-xs font-medium border transition-colors ${
+                              densityType === 'queue'
+                                ? 'bg-amber-600 border-amber-500 text-white'
+                                : 'bg-secondary/30 border-white/10 text-muted-foreground hover:text-foreground'
+                            }`}
+                          >
+                            Kuyruk
+                          </button>
+                        </div>
+                        {loadingDensity && (
+                          <div className="flex items-center gap-2 mt-2 text-xs text-orange-300">
+                            <RefreshCw className="w-3 h-3 animate-spin" />
+                            Yoğunluk hesaplanıyor...
+                          </div>
+                        )}
+                        {gaussianData && !loadingDensity && (
+                          <div className="mt-2 text-xs text-muted-foreground">
+                            {gaussianData.active_cameras?.length ?? 0} aktif kamera •{' '}
+                            {gaussianData.has_positions ? 'Gerçek konumlar' : 'Varsayılan konumlar'}
+                          </div>
+                        )}
+                        <Button
+                          size="sm"
+                          className="mt-2 w-full bg-orange-600 hover:bg-orange-700"
+                          onClick={() => {
+                            if (selectedFloor) loadGaussianData(selectedFloor.floor_id, densityType, dateFrom, dateTo);
+                          }}
+                          disabled={loadingDensity}
+                        >
+                          {loadingDensity ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <RefreshCw className="w-3 h-3 mr-1" />}
+                          Yenile
+                        </Button>
+                      </div>
+                    )}
+
                     {/* Report Generation Controls */}
-                    <div className="bg-secondary/30 rounded-lg p-4 mb-4">
+                    <div className={`bg-secondary/30 rounded-lg p-4 mb-4 ${heatmapMode === 'density' ? 'opacity-60' : ''}`}>
                       <div className="flex items-center gap-2 mb-3">
                         <Calendar className="w-4 h-4 text-primary" />
-                        <span className="font-medium text-sm">Rapor Oluştur</span>
+                        <span className="font-medium text-sm">{heatmapMode === 'density' ? 'Tarih Aralığı (iki mod için ortak)' : 'Rapor Oluştur'}</span>
                       </div>
                       
                       <div className="grid grid-cols-2 gap-3 mb-3">
@@ -1634,7 +1872,36 @@ const HeatmapPage = () => {
                   </div>
 
                   {/* Heatmap Display */}
-                  {reportData ? (
+                  {heatmapMode === 'density' && (floorPlanMeta || heatmapData) ? (
+                    <div className="bg-card border border-white/10 rounded-lg overflow-hidden">
+                      <div className="p-3 border-b border-white/10 flex items-center justify-between">
+                        <span className="text-sm text-muted-foreground">
+                          {new Date(dateFrom).toLocaleDateString('tr-TR')} – {new Date(dateTo).toLocaleDateString('tr-TR')}
+                        </span>
+                        <span className={`text-xs font-medium flex items-center gap-1 ${densityType === 'queue' ? 'text-amber-400' : 'text-blue-400'}`}>
+                          <ThermometerSun className="w-3 h-3" />
+                          {densityType === 'queue' ? 'KUYRUK YOĞUNLUĞU' : 'KİŞİ TOPLANMA HARİTASI'}
+                        </span>
+                      </div>
+                      <div className="p-4">
+                        {loadingDensity ? (
+                          <div className="flex items-center justify-center h-64">
+                            <div className="text-center">
+                              <RefreshCw className="w-8 h-8 animate-spin mx-auto mb-3 text-orange-400" />
+                              <p className="text-sm text-muted-foreground">Gaussian yoğunluk hesaplanıyor...</p>
+                            </div>
+                          </div>
+                        ) : (
+                          <canvas ref={canvasRef} className="w-full rounded-lg" />
+                        )}
+                      </div>
+                    </div>
+                  ) : heatmapMode === 'density' ? (
+                    <div className="bg-card border border-white/10 rounded-lg p-8 text-center">
+                      <ThermometerSun className="w-10 h-10 mx-auto mb-3 text-orange-400 opacity-60" />
+                      <p className="text-sm text-muted-foreground">Kat seçin ve yoğunluk analizini başlatın.</p>
+                    </div>
+                  ) : reportData ? (
                     <div className="bg-card border border-white/10 rounded-lg overflow-hidden">
                       {viewMode === 'compare' && compareData ? (
                         /* Comparison View */
