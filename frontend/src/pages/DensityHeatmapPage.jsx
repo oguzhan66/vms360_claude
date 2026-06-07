@@ -139,9 +139,10 @@ const DensityHeatmapPage = () => {
 
   const getDateRange = () => {
     const today = new Date().toISOString().split('T')[0];
-    const days = dateRange === '1d' ? 1 : dateRange === '7d' ? 7 : 30;
+    if (dateRange === '1d') return { date_from: today, date_to: today };
+    const days = dateRange === '7d' ? 7 : 30;
     return {
-      date_from: new Date(Date.now() - days * 86400000).toISOString().split('T')[0],
+      date_from: new Date(Date.now() - (days - 1) * 86400000).toISOString().split('T')[0],
       date_to: today
     };
   };
@@ -265,14 +266,17 @@ const DensityHeatmapPage = () => {
           <>
             {matrixData.stores.length > 0 && (
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                <SummaryCard icon={Activity} label="Toplam Trafik" value={globalTotal.toLocaleString('tr')}
-                  sub={`${matrixData.stores.length} mağaza, ${dateRange === '1d' ? 'bugün' : dateRange === '7d' ? '7 günlük' : '30 günlük'} ort.`} color="text-primary" />
+                <SummaryCard icon={Activity}
+                  label={dataType === 'counter' ? 'Ort. Doluluk Skoru' : 'Ort. Kuyruk Skoru'}
+                  value={globalTotal.toFixed(1)}
+                  sub={`${matrixData.stores.length} mağaza, ${dateRange === '1d' ? 'bugün' : dateRange === '7d' ? '7 günlük' : '30 günlük'} ort.`}
+                  color="text-primary" />
                 <SummaryCard icon={Clock} label="En Yoğun Saat" value={peakHourEntry.hour}
-                  sub={`${peakHourEntry.total.toLocaleString('tr')} toplam ziyaretçi`} color="text-orange-400" />
+                  sub={`${peakHourEntry.total.toFixed(1)} ort. ${dataType === 'counter' ? 'doluluk %' : 'kuyruk'}`} color="text-orange-400" />
                 <SummaryCard icon={TrendingUp} label="En Sakin Saat" value={quietHourEntry.hour === '-' ? '-' : quietHourEntry.hour}
                   sub="En düşük trafik saati" color="text-blue-400" />
                 <SummaryCard icon={Store} label="En Yoğun Mağaza" value={busiestStore?.name || '-'}
-                  sub={busiestStore?.total ? `${busiestStore.total.toLocaleString('tr')} toplam` : ''} color="text-emerald-400" />
+                  sub={busiestStore?.total ? `${busiestStore.total.toFixed(1)} doluluk skoru` : ''} color="text-emerald-400" />
               </div>
             )}
 

@@ -683,10 +683,20 @@ async def init_scheduler():
         id='collect_daily_vms_report',
         replace_existing=True
     )
-    
+
+    # Job 9: Analytics (age/gender) snapshots every 15 minutes via analytics/report API
+    from data_collector import collect_analytics_snapshot
+    scheduler.add_job(
+        collect_analytics_snapshot,
+        CronTrigger(minute='*/15'),
+        id='collect_analytics_snapshots',
+        replace_existing=True
+    )
+
     scheduler.start()
     logger.info("Scheduler started:")
-    logger.info("  - Data snapshots: every 5 minutes")
+    logger.info("  - Counter + Queue snapshots: every 5 minutes")
+    logger.info("  - Analytics (age/gender) snapshots: every 15 minutes")
     logger.info("  - Hourly aggregates: every hour at :55")
     logger.info("  - Daily summaries: every day at 23:59")
     logger.info("  - Snapshot cleanup: Sundays at 03:00")
@@ -2403,28 +2413,6 @@ async def _fetch_live_queue_data(store_ids: Optional[str] = None, allowed_stores
     return result
 
 
-# ============== LIVE DATA ENDPOINTS ==============
-
-@api_router.get("/live/counter")
-async def get_live_counter_data(
-    store_ids: Optional[str] = None,
-    user: dict = Depends(require_auth)
-):
-    """Get live people counter data for all or specific stores"""
-    from permissions import get_user_allowed_stores
-    allowed_stores = await get_user_allowed_stores(user)
-    return await _fetch_live_counter_data(store_ids, allowed_stores)
-
-@api_router.get("/live/queue")
-async def get_live_queue_data(
-    store_ids: Optional[str] = None,
-    user: dict = Depends(require_auth)
-):
-    """Get live queue data for all or specific stores - supports multiple cameras"""
-    from permissions import get_user_allowed_stores
-    allowed_stores = await get_user_allowed_stores(user)
-    return await _fetch_live_queue_data(store_ids, allowed_stores)
-
 # Helper function for analytics data (can be called internally)
 async def _fetch_analytics_data(
     store_ids: Optional[str] = None,
@@ -2434,9 +2422,11 @@ async def _fetch_analytics_data(
     from_age: Optional[int] = None,
     to_age: Optional[int] = None,
     allowed_camera_ids: Optional[List[str]] = None,
-    last_minutes: Optional[int] = None  # Added for date_range support
+    last_minutes: Optional[int] = None
 ):
-    """Internal helper to fetch analytics data from VMS"""
+    """Fetch age/gender analytics from VMS using POST analytics/report API."""
+    import httpx
+
     result = {
         "total_events": 0,
         "gender_distribution": {"Male": 0, "Female": 0},
@@ -2445,73 +2435,59 @@ async def _fetch_analytics_data(
         },
         "events": []
     }
-    
-    # Get VMS servers
+
+    if allowed_camera_ids is not None and not allowed_camera_ids:
+        return result
+
+    # Determine time range
+    if not time_from:
+        mins = last_minutes if last_minutes else 1440
+        t_from = datetime.now(timezone.utc) - timedelta(minutes=mins)
+        time_from = t_from.strftime('%Y-%m-%dT%H:%M:%S')
+    if not time_to:
+        time_to = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')
+
     vms_servers = await db.vms_servers.find({"is_active": True}, {"_id": 0}).to_list(100)
-    
+
     for vms in vms_servers:
-        # Build query params
-        params = []
-        if time_from:
-            params.append(f"timeFrom={time_from}")
-        if time_to:
-            params.append(f"timeTo={time_to}")
-        if gender:
-            params.append(f"gender={gender}")
-        if from_age:
-            params.append(f"fromAge={from_age}")
-        if to_age:
-            params.append(f"toAge={to_age}")
-        
-        # If no time params, use lastMinutes (default 1440 = 1 day)
-        if not time_from and not time_to:
-            mins = last_minutes if last_minutes else 1440  # Default 1 day instead of 60 minutes
-            params.append(f"lastMinutes={mins}")
-        
-        query_string = "&".join(params)
-        endpoint = f"/rsapi/modules/fr/searchevents?{query_string}"
-        
-        xml_data = await fetch_vms_data(vms, endpoint)
-        if xml_data:
-            parsed = parse_analytics_xml(xml_data)
-            # parse_analytics_xml returns {'cameras': [...]} where each camera has 'detections'
-            for camera in parsed.get('cameras', []):
-                camera_id = camera.get('camera_id')
-                
-                # Filter by allowed camera IDs if specified
-                if allowed_camera_ids is not None and camera_id not in allowed_camera_ids:
-                    continue
-                
-                for event in camera.get('detections', []):
-                    # Gender distribution - only count Male and Female
-                    gender_val = event.get("gender", "")
-                    if gender_val == "Male":
-                        result["gender_distribution"]["Male"] += 1
-                        result["total_events"] += 1
-                    elif gender_val == "Female":
-                        result["gender_distribution"]["Female"] += 1
-                        result["total_events"] += 1
-                    # Skip Unknown gender
-                    
-                    # Age distribution (only for valid genders)
-                    if gender_val in ["Male", "Female"]:
-                        age = event.get("age", 0)
-                        if age < 18:
-                            result["age_distribution"]["0-17"] += 1
-                        elif age < 25:
-                            result["age_distribution"]["18-24"] += 1
-                        elif age < 35:
-                            result["age_distribution"]["25-34"] += 1
-                        elif age < 45:
-                            result["age_distribution"]["35-44"] += 1
-                        elif age < 55:
-                            result["age_distribution"]["45-54"] += 1
-                        else:
-                            result["age_distribution"]["55+"] += 1
-                    
-                    event['camera_id'] = camera_id
-                    result["events"].append(event)
-    
+        try:
+            vms_url = vms["url"].rstrip("/")
+            auth = (vms.get("username", ""), vms.get("password", ""))
+            body_base: dict = {"timeFrom": time_from, "timeTo": time_to}
+            if allowed_camera_ids is not None:
+                body_base["cameraIds"] = allowed_camera_ids
+
+            async with httpx.AsyncClient(timeout=15) as client:
+                r_age = await client.post(
+                    f"{vms_url}/rsapi/modules/fr/analytics/report",
+                    auth=auth, json={**body_base, "reportType": "Age"}
+                )
+                age_rows = r_age.json().get("rows", []) if r_age.status_code == 200 else []
+
+                r_gender = await client.post(
+                    f"{vms_url}/rsapi/modules/fr/analytics/report",
+                    auth=auth, json={**body_base, "reportType": "Gender"}
+                )
+                gender_rows = r_gender.json().get("rows", []) if r_gender.status_code == 200 else []
+
+            for row in age_rows:
+                result["age_distribution"]["0-17"]  += row.get("age_0_17", 0) or 0
+                result["age_distribution"]["18-24"] += row.get("age_18_24", 0) or 0
+                result["age_distribution"]["25-34"] += row.get("age_25_34", 0) or 0
+                result["age_distribution"]["35-44"] += row.get("age_35_44", 0) or 0
+                result["age_distribution"]["45-54"] += row.get("age_45_54", 0) or 0
+                result["age_distribution"]["55+"]   += (row.get("age_55_64", 0) or 0) + (row.get("age_65_plus", 0) or 0)
+
+            for row in gender_rows:
+                male   = row.get("male", 0) or 0
+                female = row.get("female", 0) or 0
+                result["gender_distribution"]["Male"]   += male
+                result["gender_distribution"]["Female"] += female
+                result["total_events"] += male + female
+
+        except Exception as e:
+            logger.error(f"_fetch_analytics_data VMS error ({vms.get('name', '')}): {e}")
+
     return result
 
 @api_router.get("/live/analytics")
@@ -2541,26 +2517,37 @@ async def get_live_analytics_data(
             "events": []
         }
     
-    # Get analytics camera IDs for the selected stores
-    allowed_camera_ids = None
+    # Hangi mağazaların kameralarına bakacağımızı belirle
     if store_ids:
         requested_ids = store_ids.split(",")
         if allowed_stores is not None:
             requested_ids = [sid for sid in requested_ids if sid in allowed_stores]
-        
-        # Get camera IDs from requested stores
-        stores = await db.stores.find({"id": {"$in": requested_ids}}, {"_id": 0}).to_list(100)
-        camera_ids = []
-        for store in stores:
-            # Get from both old (single) and new (multiple) fields
-            analytics_ids = store.get("analytics_camera_ids", [])
-            if store.get("analytics_camera_id") and store["analytics_camera_id"] not in analytics_ids:
-                analytics_ids.append(store["analytics_camera_id"])
-            camera_ids.extend(analytics_ids)
-        
-        if camera_ids:
-            allowed_camera_ids = camera_ids
-    
+        store_query: dict = {"id": {"$in": requested_ids}}
+    elif allowed_stores is not None:
+        store_query = {"id": {"$in": list(allowed_stores)}}
+    else:
+        store_query = {}
+
+    # Sadece stores.analytics_camera_ids'de tanımlı kameralardan veri al
+    stores_docs = await db.stores.find(store_query, {"_id": 0, "analytics_camera_ids": 1, "analytics_camera_id": 1}).to_list(200)
+    allowed_camera_ids: List[str] = []
+    for s in stores_docs:
+        for vid in s.get("analytics_camera_ids") or []:
+            if vid and vid not in allowed_camera_ids:
+                allowed_camera_ids.append(vid)
+        single = s.get("analytics_camera_id")
+        if single and single not in allowed_camera_ids:
+            allowed_camera_ids.append(single)
+
+    # Hiç tanımlı kamera yoksa boş dön
+    if not allowed_camera_ids:
+        return {
+            "total_events": 0,
+            "gender_distribution": {"Male": 0, "Female": 0},
+            "age_distribution": {"0-17": 0, "18-24": 0, "25-34": 0, "35-44": 0, "45-54": 0, "55+": 0},
+            "events": []
+        }
+
     return await _fetch_analytics_data(store_ids, time_from, time_to, gender, from_age, to_age, allowed_camera_ids)
 
 
@@ -2571,16 +2558,13 @@ async def get_live_analytics_by_store(
     time_to: Optional[str] = None,
     user: dict = Depends(require_auth)
 ):
-    """Get analytics data (age/gender) per store - supports multiple cameras"""
+    """Get analytics data (age/gender) per store using VMS analytics/report API."""
+    import httpx
     from permissions import get_user_allowed_stores
-    
-    result = []
-    
-    # Get user's allowed stores
+
     allowed_stores = await get_user_allowed_stores(user)
-    
-    # Get stores with permission filtering
-    store_query = {}
+
+    store_query: dict = {}
     if store_ids:
         requested_ids = store_ids.split(",")
         if allowed_stores is not None:
@@ -2588,47 +2572,77 @@ async def get_live_analytics_by_store(
         store_query["id"] = {"$in": requested_ids}
     elif allowed_stores is not None:
         if not allowed_stores:
-            return []  # No access
+            return []
         store_query["id"] = {"$in": list(allowed_stores)}
-    
+
     stores = await db.stores.find(store_query, {"_id": 0}).to_list(100)
-    
-    # Get VMS servers
-    vms_servers = await db.vms_servers.find({"is_active": True}, {"_id": 0}).to_list(100)
-    vms_dict = {v["id"]: v for v in vms_servers}
-    
-    # Get camera names from VMS
-    camera_names = {}
-    for vms_id, vms in vms_dict.items():
-        camera_list_xml = await fetch_vms_data(vms, "/rsapi/cameras")
-        if camera_list_xml:
-            parsed_list = parse_camera_list_xml(camera_list_xml)
-            for cam in parsed_list.get('cameras', []):
-                camera_names[cam['camera_id']] = cam['name']
-    
-    # Fetch analytics data from all VMS servers
-    all_events = []
-    for vms in vms_servers:
-        endpoint = "/rsapi/modules/fr/searchevents?lastMinutes=1440"  # Default 1 day to match /live/analytics
-        if time_from:
-            endpoint = f"/rsapi/modules/fr/searchevents?timeFrom={time_from}"
-            if time_to:
-                endpoint += f"&timeTo={time_to}"
-        
-        xml_data = await fetch_vms_data(vms, endpoint)
-        if xml_data:
-            parsed = parse_analytics_xml(xml_data)
-            # parse_analytics_xml returns {'cameras': [...]} where each camera has 'detections'
-            for camera in parsed.get('cameras', []):
-                camera_id = camera.get('camera_id')
-                for detection in camera.get('detections', []):
-                    detection['camera_id'] = camera_id
-                    detection['vms_id'] = vms["id"]
-                    all_events.append(detection)
-    
-    # Build result per store
+    cameras = await db.cameras.find({}, {"_id": 0, "name": 1, "camera_vms_id": 1}).to_list(500)
+    vms_id_to_name: Dict[str, str] = {
+        c["camera_vms_id"]: c["name"]
+        for c in cameras if c.get("camera_vms_id") and c.get("name")
+    }
+
+    # Collect all analytics camera VMS IDs across stores
+    all_cam_ids: List[str] = []
     for store in stores:
-        # Get location info
+        for vid in (store.get("analytics_camera_ids") or []):
+            if vid and vid not in all_cam_ids:
+                all_cam_ids.append(vid)
+        single = store.get("analytics_camera_id")
+        if single and single not in all_cam_ids:
+            all_cam_ids.append(single)
+
+    # Default time range: today 00:00 → now
+    if not time_from:
+        time_from = datetime.now(timezone.utc).strftime('%Y-%m-%dT00:00:00')
+    if not time_to:
+        time_to = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')
+
+    # Fetch Age + Gender reports from VMS (per-camera rows)
+    age_by_cam: Dict[str, dict] = {}
+    gender_by_cam: Dict[str, dict] = {}
+
+    vms_servers = await db.vms_servers.find({"is_active": True}, {"_id": 0}).to_list(10)
+    for vms in vms_servers:
+        try:
+            vms_url = vms["url"].rstrip("/")
+            auth = (vms.get("username", ""), vms.get("password", ""))
+            body_base: dict = {"timeFrom": time_from, "timeTo": time_to}
+            if all_cam_ids:
+                body_base["cameraIds"] = all_cam_ids
+
+            async with httpx.AsyncClient(timeout=20) as client:
+                r_age = await client.post(
+                    f"{vms_url}/rsapi/modules/fr/analytics/report",
+                    auth=auth, json={**body_base, "reportType": "Age"}
+                )
+                r_gender = await client.post(
+                    f"{vms_url}/rsapi/modules/fr/analytics/report",
+                    auth=auth, json={**body_base, "reportType": "Gender"}
+                )
+
+            if r_age.status_code == 200:
+                for row in r_age.json().get("rows", []):
+                    cam = row.get("cameraName", "")
+                    if cam not in age_by_cam:
+                        age_by_cam[cam] = {"unknown": 0, "age_0_17": 0, "age_18_24": 0, "age_25_34": 0, "age_35_44": 0, "age_45_54": 0, "age_55_64": 0, "age_65_plus": 0}
+                    for k in age_by_cam[cam]:
+                        age_by_cam[cam][k] += row.get(k, 0) or 0
+
+            if r_gender.status_code == 200:
+                for row in r_gender.json().get("rows", []):
+                    cam = row.get("cameraName", "")
+                    if cam not in gender_by_cam:
+                        gender_by_cam[cam] = {"male": 0, "female": 0}
+                    gender_by_cam[cam]["male"]   += row.get("male", 0) or 0
+                    gender_by_cam[cam]["female"] += row.get("female", 0) or 0
+
+        except Exception as e:
+            logger.error(f"analytics/stores VMS error ({vms.get('name', '')}): {e}")
+
+    # Build per-store result
+    result = []
+    for store in stores:
         district = await db.districts.find_one({"id": store.get("district_id")}, {"_id": 0})
         city = None
         region = None
@@ -2636,85 +2650,62 @@ async def get_live_analytics_by_store(
             city = await db.cities.find_one({"id": district.get("city_id")}, {"_id": 0})
             if city:
                 region = await db.regions.find_one({"id": city.get("region_id")}, {"_id": 0})
-        
-        # Get camera IDs from both old (single) and new (multiple) fields
-        analytics_camera_ids = store.get("analytics_camera_ids", [])
-        # Backward compatibility: add old single camera if exists
-        if store.get("analytics_camera_id") and store["analytics_camera_id"] not in analytics_camera_ids:
-            analytics_camera_ids.append(store["analytics_camera_id"])
-        
-        # Filter events for this store's analytics cameras
-        store_events = []
-        camera_details = []
-        
-        if analytics_camera_ids:
-            for cam_id in analytics_camera_ids:
-                cam_events = [e for e in all_events if e.get("camera_id") == cam_id]
-                store_events.extend(cam_events)
-                
-                # Calculate per-camera stats
-                cam_male = sum(1 for e in cam_events if e.get("gender") == "Male")
-                cam_female = sum(1 for e in cam_events if e.get("gender") == "Female")
-                camera_details.append({
-                    "camera_id": cam_id,
-                    "camera_name": camera_names.get(cam_id, f"Kamera {cam_id[:8]}"),
-                    "detections": len(cam_events),
-                    "male_count": cam_male,
-                    "female_count": cam_female
-                })
-        else:
-            # If no specific cameras assigned, show all events from this store's VMS
-            store_events = [e for e in all_events if e.get("vms_id") == store.get("vms_id")]
-        
-        # Calculate stats
-        total_detections = len(store_events)
-        male_count = sum(1 for e in store_events if e.get("gender") == "Male")
-        female_count = sum(1 for e in store_events if e.get("gender") == "Female")
-        unknown_count = total_detections - male_count - female_count
-        
-        # Age distribution
+
+        cam_ids = list(store.get("analytics_camera_ids") or [])
+        if store.get("analytics_camera_id") and store["analytics_camera_id"] not in cam_ids:
+            cam_ids.append(store["analytics_camera_id"])
+
         age_dist = {"0-17": 0, "18-24": 0, "25-34": 0, "35-44": 0, "45-54": 0, "55+": 0}
-        for event in store_events:
-            age = event.get("age", 0)
-            if isinstance(age, str):
-                try:
-                    age = int(age)
-                except:
-                    age = 0
-            if age < 18:
-                age_dist["0-17"] += 1
-            elif age < 25:
-                age_dist["18-24"] += 1
-            elif age < 35:
-                age_dist["25-34"] += 1
-            elif age < 45:
-                age_dist["35-44"] += 1
-            elif age < 55:
-                age_dist["45-54"] += 1
-            else:
-                age_dist["55+"] += 1
-        
+        male_count = female_count = 0
+        camera_details = []
+
+        for vms_id in cam_ids:
+            cam_name = vms_id_to_name.get(vms_id, "")
+            ag = age_by_cam.get(cam_name, {})
+            gd = gender_by_cam.get(cam_name, {})
+
+            cam_male   = gd.get("male", 0)
+            cam_female = gd.get("female", 0)
+            male_count   += cam_male
+            female_count += cam_female
+
+            age_dist["0-17"]  += ag.get("age_0_17", 0)
+            age_dist["18-24"] += ag.get("age_18_24", 0)
+            age_dist["25-34"] += ag.get("age_25_34", 0)
+            age_dist["35-44"] += ag.get("age_35_44", 0)
+            age_dist["45-54"] += ag.get("age_45_54", 0)
+            age_dist["55+"]   += ag.get("age_55_64", 0) + ag.get("age_65_plus", 0)
+
+            camera_details.append({
+                "camera_id":   vms_id,
+                "camera_name": cam_name or f"Kamera {vms_id[:8]}",
+                "detections":  cam_male + cam_female,
+                "male_count":  cam_male,
+                "female_count": cam_female,
+            })
+
+        total_detections = male_count + female_count
         result.append({
-            "store_id": store["id"],
-            "store_name": store["name"],
-            "district_id": store.get("district_id"),
+            "store_id":     store["id"],
+            "store_name":   store["name"],
+            "district_id":  store.get("district_id"),
             "district_name": district["name"] if district else "",
-            "city_id": city["id"] if city else "",
-            "city_name": city["name"] if city else "",
-            "region_id": region["id"] if region else "",
-            "region_name": region["name"] if region else "",
+            "city_id":      city["id"] if city else "",
+            "city_name":    city["name"] if city else "",
+            "region_id":    region["id"] if region else "",
+            "region_name":  region["name"] if region else "",
             "total_detections": total_detections,
-            "male_count": male_count,
+            "male_count":   male_count,
             "female_count": female_count,
-            "unknown_count": unknown_count,
-            "male_percent": round(male_count / total_detections * 100, 1) if total_detections > 0 else 0,
+            "unknown_count": 0,
+            "male_percent":   round(male_count   / total_detections * 100, 1) if total_detections > 0 else 0,
             "female_percent": round(female_count / total_detections * 100, 1) if total_detections > 0 else 0,
             "age_distribution": age_dist,
-            "camera_count": len(analytics_camera_ids),
+            "camera_count":  len(cam_ids),
             "camera_details": camera_details,
-            "events": store_events[:10]  # Last 10 events
+            "events": [],
         })
-    
+
     return result
 
 # ============== REPORT ENDPOINTS ==============
@@ -5581,232 +5572,6 @@ async def export_analytics_pdf(
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename=gelismis_analitik_{datetime.now().strftime('%Y%m%d')}.pdf"}
     )
-
-
-# ============== ALERT ENDPOINTS ==============
-
-@api_router.get("/alerts")
-async def get_alerts(
-    alert_type: Optional[str] = None,
-    store_id: Optional[str] = None,
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None,
-    status: Optional[str] = None,  # active, cleared, all
-    limit: int = 100,
-    user: dict = Depends(require_auth)
-):
-    """Uyarı listesi — filtrelenebilir"""
-    now = datetime.now(timezone.utc)
-    today = now.strftime("%Y-%m-%d")
-    query = {}
-    if alert_type:
-        query["alert_type"] = alert_type
-    if store_id:
-        query["store_id"] = store_id
-    if date_from or date_to:
-        query["date"] = {}
-        if date_from:
-            query["date"]["$gte"] = date_from
-        if date_to:
-            query["date"]["$lte"] = date_to
-    else:
-        query["date"] = today  # Varsayılan: bugün
-    if status == "active":
-        query["cleared_at"] = None
-    elif status == "cleared":
-        query["cleared_at"] = {"$ne": None}
-
-    alerts = await db.alerts.find(query, {"_id": 0}).sort("started_at", -1).limit(limit).to_list(limit)
-    return {"alerts": alerts, "total": len(alerts)}
-
-
-@api_router.get("/alerts/stats")
-async def get_alert_stats(
-    alert_type: Optional[str] = None,
-    store_id: Optional[str] = None,
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None,
-    user: dict = Depends(require_auth)
-):
-    """Saatlik/günlük uyarı istatistikleri — grafik için"""
-    now = datetime.now(timezone.utc)
-    today = now.strftime("%Y-%m-%d")
-    start = date_from or (now - timedelta(days=7)).strftime("%Y-%m-%d")
-    end = date_to or today
-
-    match = {"date": {"$gte": start, "$lte": end}}
-    if alert_type:
-        match["alert_type"] = alert_type
-    if store_id:
-        match["store_id"] = store_id
-
-    # Saatlik dağılım
-    hourly_pipeline = [
-        {"$match": match},
-        {"$group": {"_id": {"hour": "$hour", "level": "$level"}, "count": {"$sum": 1}}},
-        {"$sort": {"_id.hour": 1}}
-    ]
-    hourly_raw = await db.alerts.aggregate(hourly_pipeline).to_list(100)
-    hourly = [{
-        "hour": r["_id"]["hour"],
-        "label": f"{str(r['_id']['hour']).zfill(2)}:00",
-        "level": r["_id"]["level"],
-        "count": r["count"]
-    } for r in hourly_raw]
-
-    # Günlük özet
-    daily_pipeline = [
-        {"$match": match},
-        {"$group": {
-            "_id": "$date",
-            "total": {"$sum": 1},
-            "critical": {"$sum": {"$cond": [{"$eq": ["$level", "critical"]}, 1, 0]}},
-            "warning": {"$sum": {"$cond": [{"$eq": ["$level", "warning"]}, 1, 0]}},
-            "avg_duration": {"$avg": "$duration_minutes"}
-        }},
-        {"$sort": {"_id": 1}}
-    ]
-    daily = await db.alerts.aggregate(daily_pipeline).to_list(100)
-
-    # Mağaza özeti
-    store_pipeline = [
-        {"$match": match},
-        {"$group": {
-            "_id": "$store_id",
-            "store_name": {"$first": "$store_name"},
-            "total": {"$sum": 1},
-            "critical": {"$sum": {"$cond": [{"$eq": ["$level", "critical"]}, 1, 0]}},
-            "avg_duration": {"$avg": "$duration_minutes"}
-        }},
-        {"$sort": {"total": -1}}
-    ]
-    by_store = await db.alerts.aggregate(store_pipeline).to_list(50)
-
-    return {
-        "start_date": start, "end_date": end,
-        "hourly_distribution": hourly,
-        "daily_summary": [{"date": d["_id"], "total": d["total"],
-                            "critical": d["critical"], "warning": d["warning"],
-                            "avg_duration": round(d.get("avg_duration") or 0, 1)} for d in daily],
-        "by_store": [{"store_id": s["_id"], "store_name": s["store_name"],
-                      "total": s["total"], "critical": s["critical"],
-                      "avg_duration": round(s.get("avg_duration") or 0, 1)} for s in by_store],
-        "total_alerts": sum(d["total"] for d in daily)
-    }
-
-
-@api_router.post("/alerts/send-report")
-async def send_alert_report(
-    body: dict,
-    user: dict = Depends(require_auth)
-):
-    """Seçili uyarıları e-posta ile gönder"""
-    import xlsxwriter
-    date_from = body.get("date_from")
-    date_to = body.get("date_to")
-    alert_type = body.get("alert_type")
-    recipient = body.get("recipient")
-
-    now = datetime.now(timezone.utc)
-    start = date_from or now.strftime("%Y-%m-%d")
-    end = date_to or now.strftime("%Y-%m-%d")
-
-    query = {"date": {"$gte": start, "$lte": end}}
-    if alert_type:
-        query["alert_type"] = alert_type
-    alerts = await db.alerts.find(query, {"_id": 0}).sort("started_at", -1).to_list(1000)
-
-    if not alerts:
-        return {"success": False, "message": "Belirtilen aralıkta uyarı bulunamadı"}
-
-    smtp = await db.smtp_settings.find_one({}, {"_id": 0})
-    if not smtp or not smtp.get("host"):
-        return {"success": False, "message": "SMTP ayarları yapılmamış"}
-
-    # Excel oluştur
-    output = BytesIO()
-    wb = xlsxwriter.Workbook(output, {"in_memory": True})
-    header_fmt = wb.add_format({"bold": True, "bg_color": "#3B82F6", "font_color": "white", "border": 1})
-    cell_fmt = wb.add_format({"border": 1})
-    crit_fmt = wb.add_format({"border": 1, "bg_color": "#FEE2E2", "font_color": "#991B1B"})
-    warn_fmt = wb.add_format({"border": 1, "bg_color": "#FEF3C7", "font_color": "#92400E"})
-
-    ws = wb.add_worksheet("Uyarı Raporu")
-    headers = ["Mağaza", "Tür", "Seviye", "Başlangıç", "Bitiş", "Süre (dk)", "Maks. Değer", "Eşik"]
-    for col, h in enumerate(headers):
-        ws.write(0, col, h, header_fmt)
-    ws.set_column(0, 0, 20)
-    ws.set_column(1, 7, 15)
-
-    type_map = {"counter": "Kişi Sayma", "queue": "Kuyruk"}
-    level_map = {"critical": "Kritik", "warning": "Uyarı"}
-
-    for row, a in enumerate(alerts, 1):
-        fmt = crit_fmt if a.get("level") == "critical" else warn_fmt
-        ws.write(row, 0, a.get("store_name", ""), fmt)
-        ws.write(row, 1, type_map.get(a.get("alert_type", ""), a.get("alert_type", "")), fmt)
-        ws.write(row, 2, level_map.get(a.get("level", ""), a.get("level", "")), fmt)
-        ws.write(row, 3, a.get("started_at", "")[:19].replace("T", " "), fmt)
-        ws.write(row, 4, a.get("cleared_at", "Devam ediyor")[:19].replace("T", " ") if a.get("cleared_at") else "Devam ediyor", fmt)
-        ws.write(row, 5, a.get("duration_minutes", "-"), fmt)
-        ws.write(row, 6, a.get("peak_value", 0), fmt)
-        ws.write(row, 7, a.get("threshold", a.get("threshold_percent", "-")), fmt)
-
-    wb.close()
-    output.seek(0)
-
-    # E-posta gönder
-    try:
-        msg = MIMEMultipart()
-        msg["Subject"] = f"VMS360 Uyarı Raporu | {start} - {end}"
-        msg["From"] = f"{smtp.get('from_name','VMS360')} <{smtp['from_email']}>"
-        msg["To"] = recipient or smtp["from_email"]
-
-        html = f"""<html><body style="font-family:Arial;padding:20px;">
-        <h2>VMS360 Uyarı Raporu</h2>
-        <p>Tarih: {start} - {end}</p>
-        <p>Toplam uyarı: <strong>{len(alerts)}</strong></p>
-        <p>Kritik: <strong style="color:red">{sum(1 for a in alerts if a.get('level')=='critical')}</strong></p>
-        <p>Uyarı: <strong style="color:orange">{sum(1 for a in alerts if a.get('level')=='warning')}</strong></p>
-        <p>Excel raporu ektedir.</p>
-        </body></html>"""
-        msg.attach(MIMEText(html, "html", "utf-8"))
-
-        from email.mime.base import MIMEBase
-        from email import encoders
-        part = MIMEBase("application", "octet-stream")
-        part.set_payload(output.read())
-        encoders.encode_base64(part)
-        part.add_header("Content-Disposition", f"attachment; filename=uyari_raporu_{start}_{end}.xlsx")
-        msg.attach(part)
-
-        if smtp.get("use_tls", True):
-            server = smtplib.SMTP(smtp["host"], smtp["port"], timeout=30)
-            server.starttls()
-        else:
-            server = smtplib.SMTP_SSL(smtp["host"], smtp["port"], timeout=30)
-        if smtp.get("username"):
-            server.login(smtp["username"], smtp["password"])
-        server.sendmail(msg["From"], msg["To"], msg.as_string())
-        server.quit()
-        return {"success": True, "message": f"{len(alerts)} uyarı raporu gönderildi", "sent_to": msg["To"]}
-    except Exception as e:
-        return {"success": False, "message": str(e)}
-
-
-@api_router.get("/alerts/settings")
-async def get_alert_settings(user: dict = Depends(require_auth)):
-    settings = await db.alert_settings.find_one({}, {"_id": 0}) or {
-        "enabled": True, "alert_emails": [], "counter_warning_percent": 70,
-        "counter_critical_percent": 90, "offline_threshold_minutes": 30
-    }
-    return settings
-
-
-@api_router.put("/alerts/settings")
-async def update_alert_settings(body: dict, user: dict = Depends(require_admin)):
-    await db.alert_settings.update_one({}, {"$set": body}, upsert=True)
-    return body
 
 
 # Include the router in the main app

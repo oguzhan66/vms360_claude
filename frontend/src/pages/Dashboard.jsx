@@ -35,7 +35,7 @@ const Dashboard = () => {
         liveDataApi.getQueue(),
         reportApi.getSummary(filters),
         healthApi.getStatus().catch(() => ({ data: null })),
-        reportApi.getAnalytics({ date_range: '1d' }).catch(() => ({ data: null })),
+        liveDataApi.getAnalytics({ time_from: new Date(Date.now() - 86400000).toISOString(), time_to: new Date().toISOString() }).catch(() => ({ data: null })),
       ]);
       setCounterData(counterRes.data);
       setQueueData(queueRes.data);
@@ -158,43 +158,49 @@ const Dashboard = () => {
         )}
 
         {/* Summary Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-4 mb-6">
-          <StatCard 
-            label="Toplam Magaza" 
-            value={filteredCounterData.length} 
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-4 mb-1">
+          <StatCard
+            label="Toplam Magaza"
+            value={filteredCounterData.length}
             icon={Store}
             variant="primary"
           />
-          <StatCard 
-            label="Anlik Ziyaretci" 
-            value={totalVisitors} 
+          <StatCard
+            label="Anlik Ziyaretci"
+            value={totalVisitors}
             icon={Users}
             variant="success"
           />
-          <StatCard 
-            label="Toplam Giris" 
-            value={totalIn} 
+          <StatCard
+            label="Toplam Giris"
+            value={totalIn}
             icon={TrendingUp}
             variant="success"
           />
-          <StatCard 
-            label="Toplam Cikis" 
-            value={totalOut} 
+          <StatCard
+            label="Toplam Cikis"
+            value={totalOut}
             icon={TrendingDown}
             variant="warning"
           />
-          <StatCard 
-            label="Toplam Kuyruk" 
-            value={totalQueue} 
+          <StatCard
+            label="Toplam Kuyruk"
+            value={totalQueue}
             icon={ListOrdered}
             variant={totalQueue > 20 ? 'danger' : 'default'}
           />
-          <StatCard 
-            label="Kritik Magaza" 
-            value={statusCounts.critical} 
+          <StatCard
+            label="Kritik Magaza"
+            value={statusCounts.critical}
             icon={AlertTriangle}
             variant="danger"
           />
+        </div>
+        <div className="flex items-center gap-1 text-xs text-muted-foreground mb-5">
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            Kişi sayma ve kuyruk her 5 dk'da bir güncellenir
+          </span>
         </div>
 
         {/* Charts Row */}
@@ -291,7 +297,8 @@ const Dashboard = () => {
           <div className="chart-container">
             <div className="chart-title flex items-center gap-2">
               <ListOrdered className="w-4 h-4 text-amber-400" />
-              Kuyruk Durumu
+              <span>Kuyruk Durumu</span>
+              <span className="ml-auto text-xs font-normal text-muted-foreground">Her 5 dk'da bir güncellenir</span>
             </div>
             {queueData.length > 0 ? (
               <div className="space-y-3 mt-2">
@@ -329,10 +336,11 @@ const Dashboard = () => {
           <div className="chart-container">
             <div className="chart-title flex items-center gap-2">
               <UserCheck className="w-4 h-4 text-purple-400" />
-              Yaş/Cinsiyet Özeti (Bugün)
+              <span>Yaş/Cinsiyet Özeti (Bugün)</span>
+              <span className="ml-auto text-xs font-normal text-muted-foreground">Her 15 dk'da bir güncellenir</span>
             </div>
             {(() => {
-              const total = analyticsData?.summary?.total_detections || 0;
+              const total = analyticsData?.total_events || analyticsData?.summary?.total_detections || 0;
               const male = analyticsData?.gender_distribution?.Male || 0;
               const female = analyticsData?.gender_distribution?.Female || 0;
               const ageDist = analyticsData?.age_distribution || {};
