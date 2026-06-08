@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker exec:*)",
+      "Bash(git commit:*)",
+      "Bash(git add:*)",
+      "Bash(grep -v \"^\\\\s*//\")",
+      "Read(//c/vms360/NR==10110{depth=0} NR>=10110{for\\(i=1;i<=length\\($0\\);i++\\){c=substr\\($0,i,1\\);if\\(c==\"\"\"\"<\"\"\"\"\\){tag=substr\\($0,i\\);if\\(tag~/^<div/\\){depth++}else if\\(tag~/^</div/**)",
+      "Bash(git -C C:/vms360-lpr diff HEAD -- parksentry-platform.html)",
+      "Bash(find C:/vms360-lpr/backend -type f -name *schema* -o -name *migration* -o -name *init*)",
+      "Bash(tasklist /fi 'imagename eq node.exe')",
+      "Bash(where psql:*)",
+      "Read(//c/Program Files/**)",
+      "Read(//c/Program Files/PostgreSQL/17/**)",
+      "Bash(docker-compose -f /c/vms360/docker-compose.yml ps)",
+      "Bash(sc query:*)",
+      "Bash(where docker:*)",
+      "Bash(where nssm:*)",
+      "Bash(powershell -NoProfile -Command \"Start-Process cmd.exe -ArgumentList ''/c C:\\\\vms360\\\\setup-autostart.bat'' -Verb RunAs -Wait\")",
+      "Bash(schtasks /query /tn \"VMS360-Autostart\" /fo LIST)",
+      "Bash(cmd.exe /c \"schtasks /query /tn VMS360-Autostart /fo LIST\")",
+      "Bash(cmd.exe /c \"schtasks /query /tn \"\"VMS360-Autostart\"\" 2>&1\")",
+      "Bash(cmd.exe /c \"net session >nul 2>&1 && echo ADMIN || echo NOT_ADMIN\")",
+      "Bash(cmd.exe /c \"whoami /groups | findstr /i administrator\")",
+      "Bash(cmd.exe /c \"whoami\")",
+      "Bash(cmd.exe /c \"schtasks /create /tn \"\"VMS360-Autostart\"\" /tr \"\"C:\\\\vms360\\\\start-vms360.bat\"\" /sc ONSTART /ru SYSTEM /rl HIGHEST /delay 0002:00 /f\")",
+      "Bash(powershell -NoProfile -Command \":*)",
+      "Bash(docker.exe ps:*)",
+      "Bash(powershell.exe -Command \"docker ps\")",
+      "Bash(powershell.exe -Command \"docker --context desktop-linux ps\")"
+    ]
+  }
+}

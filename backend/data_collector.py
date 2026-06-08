@@ -403,7 +403,8 @@ async def collect_analytics_snapshot():
     Fetches today 00:00 → now cumulative totals per camera, grouped by store."""
     try:
         import httpx
-        timestamp = datetime.now(timezone.utc)
+        TR_TZ = timezone(timedelta(hours=3))
+        timestamp = datetime.now(TR_TZ)
         date_str = timestamp.strftime('%Y-%m-%d')
         hour = timestamp.hour
         minute = timestamp.minute
@@ -491,17 +492,19 @@ async def collect_analytics_snapshot():
                 ag = age_by_cam.get(cam_name, {})
                 gd = gender_by_cam.get(cam_name, {})
 
-                age_counts["0-17"] += ag.get("age_0_17", 0)
-                age_counts["18-24"] += ag.get("age_18_24", 0)
-                age_counts["25-34"] += ag.get("age_25_34", 0)
-                age_counts["35-44"] += ag.get("age_35_44", 0)
-                age_counts["45-54"] += ag.get("age_45_54", 0)
-                age_counts["55-64"] += ag.get("age_55_64", 0)
-                age_counts["65+"] += ag.get("age_65_plus", 0)
+                a0 = ag.get("age_0_17", 0); a1 = ag.get("age_18_24", 0)
+                a2 = ag.get("age_25_34", 0); a3 = ag.get("age_35_44", 0)
+                a4 = ag.get("age_45_54", 0); a5 = ag.get("age_55_64", 0)
+                a6 = ag.get("age_65_plus", 0); unk = ag.get("unknown", 0)
+                age_counts["0-17"] += a0; age_counts["18-24"] += a1
+                age_counts["25-34"] += a2; age_counts["35-44"] += a3
+                age_counts["45-54"] += a4; age_counts["55-64"] += a5
+                age_counts["65+"] += a6
                 gender_counts["Male"] += gd.get("male", 0)
                 gender_counts["Female"] += gd.get("female", 0)
-                gender_counts["Unknown"] += ag.get("unknown", 0)
-                total_events += gd.get("male", 0) + gd.get("female", 0)
+                gender_counts["Unknown"] += unk
+                # total_events from Age report (gender may not be available)
+                total_events += a0 + a1 + a2 + a3 + a4 + a5 + a6 + unk
 
             snapshots.append({
                 "store_id": store["id"],

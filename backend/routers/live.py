@@ -205,9 +205,9 @@ async def get_live_analytics_data(
     # If user has no access to any store, return empty
     if allowed_stores is not None and not allowed_stores:
         return result
-    
+
     vms_servers = await db.vms_servers.find({"is_active": True}, {"_id": 0}).to_list(100)
-    
+
     for vms in vms_servers:
         params = []
         if time_from:
@@ -220,29 +220,29 @@ async def get_live_analytics_data(
             params.append(f"fromAge={from_age}")
         if to_age:
             params.append(f"toAge={to_age}")
-        
+
         query_string = "&".join(params) if params else ""
         endpoint = f"/rsapi/modules/fr/searchevents?{query_string}" if query_string else "/rsapi/modules/fr/searchevents?lastMinutes=60"
-        
+
         xml_data = await fetch_vms_data(vms, endpoint)
         if xml_data:
             events = parse_analytics_xml(xml_data)
             for event in events.get('cameras', []):
                 result["total_events"] += 1
-                
+
                 gender_val = event.get("gender", "Unknown")
                 if gender_val in result["gender_distribution"]:
                     result["gender_distribution"][gender_val] += 1
                 else:
                     result["gender_distribution"]["Unknown"] += 1
-                
+
                 age = event.get("age", 0)
                 if isinstance(age, str):
                     try:
                         age = int(age)
                     except (ValueError, TypeError):
                         age = 0
-                
+
                 if age < 18:
                     result["age_distribution"]["0-17"] += 1
                 elif age < 25:
@@ -255,7 +255,7 @@ async def get_live_analytics_data(
                     result["age_distribution"]["45-54"] += 1
                 else:
                     result["age_distribution"]["55+"] += 1
-                
+
                 result["events"].append(event)
-    
+
     return result

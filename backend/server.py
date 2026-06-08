@@ -2439,13 +2439,33 @@ async def _fetch_analytics_data(
     if allowed_camera_ids is not None and not allowed_camera_ids:
         return result
 
-    # Determine time range
+    # VMS expects Turkey local time (UTC+3) — use TR timezone for all time strings
+    TR_TZ = timezone(timedelta(hours=3))
+
+    def _to_tr(s: str) -> str:
+        """Convert any datetime string to Turkey local time (strips tz, adds +3 if UTC)."""
+        try:
+            s_clean = s.rstrip('Z').replace('+00:00', '')
+            # If no offset info left, assume already local
+            dt = datetime.fromisoformat(s_clean)
+            if 'Z' in s or '+00:00' in s:
+                dt = (dt.replace(tzinfo=timezone.utc)).astimezone(TR_TZ)
+            return dt.strftime('%Y-%m-%dT%H:%M:%S')
+        except Exception:
+            return s
+
+    # Determine time range (Turkey local)
     if not time_from:
         mins = last_minutes if last_minutes else 1440
-        t_from = datetime.now(timezone.utc) - timedelta(minutes=mins)
+        t_from = datetime.now(TR_TZ) - timedelta(minutes=mins)
         time_from = t_from.strftime('%Y-%m-%dT%H:%M:%S')
+    else:
+        time_from = _to_tr(time_from)
+
     if not time_to:
-        time_to = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')
+        time_to = datetime.now(TR_TZ).strftime('%Y-%m-%dT%H:%M:%S')
+    else:
+        time_to = _to_tr(time_to)
 
     vms_servers = await db.vms_servers.find({"is_active": True}, {"_id": 0}).to_list(100)
 
@@ -2471,19 +2491,28 @@ async def _fetch_analytics_data(
                 gender_rows = r_gender.json().get("rows", []) if r_gender.status_code == 200 else []
 
             for row in age_rows:
-                result["age_distribution"]["0-17"]  += row.get("age_0_17", 0) or 0
-                result["age_distribution"]["18-24"] += row.get("age_18_24", 0) or 0
-                result["age_distribution"]["25-34"] += row.get("age_25_34", 0) or 0
-                result["age_distribution"]["35-44"] += row.get("age_35_44", 0) or 0
-                result["age_distribution"]["45-54"] += row.get("age_45_54", 0) or 0
-                result["age_distribution"]["55+"]   += (row.get("age_55_64", 0) or 0) + (row.get("age_65_plus", 0) or 0)
+                a0  = row.get("age_0_17", 0) or 0
+                a1  = row.get("age_18_24", 0) or 0
+                a2  = row.get("age_25_34", 0) or 0
+                a3  = row.get("age_35_44", 0) or 0
+                a4  = row.get("age_45_54", 0) or 0
+                a5  = (row.get("age_55_64", 0) or 0) + (row.get("age_65_plus", 0) or 0)
+                unk = row.get("unknown", 0) or 0
+                result["age_distribution"]["0-17"]  += a0
+                result["age_distribution"]["18-24"] += a1
+                result["age_distribution"]["25-34"] += a2
+                result["age_distribution"]["35-44"] += a3
+                result["age_distribution"]["45-54"] += a4
+                result["age_distribution"]["55+"]   += a5
+                # total_events from Age report (gender may not be available on all cameras)
+                result["total_events"] += a0 + a1 + a2 + a3 + a4 + a5 + unk
 
             for row in gender_rows:
                 male   = row.get("male", 0) or 0
                 female = row.get("female", 0) or 0
                 result["gender_distribution"]["Male"]   += male
                 result["gender_distribution"]["Female"] += female
-                result["total_events"] += male + female
+                # total_events already set from Age report — don't re-add
 
         except Exception as e:
             logger.error(f"_fetch_analytics_data VMS error ({vms.get('name', '')}): {e}")
@@ -2592,11 +2621,28 @@ async def get_live_analytics_by_store(
         if single and single not in all_cam_ids:
             all_cam_ids.append(single)
 
-    # Default time range: today 00:00 → now
+    # VMS expects Turkey local time (UTC+3)
+    TR_TZ = timezone(timedelta(hours=3))
+
+    def _to_tr(s: str) -> str:
+        try:
+            s_clean = s.rstrip('Z').replace('+00:00', '')
+            dt = datetime.fromisoformat(s_clean)
+            if 'Z' in s or '+00:00' in s:
+                dt = dt.replace(tzinfo=timezone.utc).astimezone(TR_TZ)
+            return dt.strftime('%Y-%m-%dT%H:%M:%S')
+        except Exception:
+            return s
+
     if not time_from:
-        time_from = datetime.now(timezone.utc).strftime('%Y-%m-%dT00:00:00')
+        time_from = datetime.now(TR_TZ).strftime('%Y-%m-%dT00:00:00')
+    else:
+        time_from = _to_tr(time_from)
+
     if not time_to:
-        time_to = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')
+        time_to = datetime.now(TR_TZ).strftime('%Y-%m-%dT%H:%M:%S')
+    else:
+        time_to = _to_tr(time_to)
 
     # Fetch Age + Gender reports from VMS (per-camera rows)
     age_by_cam: Dict[str, dict] = {}
@@ -2657,6 +2703,7 @@ async def get_live_analytics_by_store(
 
         age_dist = {"0-17": 0, "18-24": 0, "25-34": 0, "35-44": 0, "45-54": 0, "55+": 0}
         male_count = female_count = 0
+        age_total = 0
         camera_details = []
 
         for vms_id in cam_ids:
@@ -2669,22 +2716,27 @@ async def get_live_analytics_by_store(
             male_count   += cam_male
             female_count += cam_female
 
-            age_dist["0-17"]  += ag.get("age_0_17", 0)
-            age_dist["18-24"] += ag.get("age_18_24", 0)
-            age_dist["25-34"] += ag.get("age_25_34", 0)
-            age_dist["35-44"] += ag.get("age_35_44", 0)
-            age_dist["45-54"] += ag.get("age_45_54", 0)
-            age_dist["55+"]   += ag.get("age_55_64", 0) + ag.get("age_65_plus", 0)
+            a0 = ag.get("age_0_17", 0); a1 = ag.get("age_18_24", 0)
+            a2 = ag.get("age_25_34", 0); a3 = ag.get("age_35_44", 0)
+            a4 = ag.get("age_45_54", 0)
+            a5 = ag.get("age_55_64", 0) + ag.get("age_65_plus", 0)
+            unk = ag.get("unknown", 0)
+            age_dist["0-17"]  += a0; age_dist["18-24"] += a1
+            age_dist["25-34"] += a2; age_dist["35-44"] += a3
+            age_dist["45-54"] += a4; age_dist["55+"]   += a5
+            cam_age_total = a0 + a1 + a2 + a3 + a4 + a5 + unk
+            age_total += cam_age_total
 
             camera_details.append({
                 "camera_id":   vms_id,
                 "camera_name": cam_name or f"Kamera {vms_id[:8]}",
-                "detections":  cam_male + cam_female,
+                "detections":  cam_age_total,
                 "male_count":  cam_male,
                 "female_count": cam_female,
             })
 
-        total_detections = male_count + female_count
+        # Use Age report total (gender may not be available on all cameras)
+        total_detections = age_total if age_total > 0 else (male_count + female_count)
         result.append({
             "store_id":     store["id"],
             "store_name":   store["name"],
