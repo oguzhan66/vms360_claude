@@ -26,7 +26,7 @@ const DATE_RANGES = [
 
 const REPORT_SECTIONS = [
   { id: 'traffic', label: 'Trafik Analizi', icon: TrendingUp, description: 'Saatlik ve günlük ziyaretçi trendi' },
-  { id: 'comparison', label: 'Mağaza Karşılaştırma', icon: Store, description: 'Mağazalar arası performans analizi' },
+  { id: 'comparison', label: 'Lokasyon Karşılaştırma', icon: Store, description: 'Lokasyonlar arası performans analizi' },
   { id: 'queue', label: 'Kuyruk Analizi', icon: Clock, description: 'Bekleme süreleri ve yoğunluk' },
   { id: 'demographics', label: 'Demografik Analiz', icon: Users, description: 'Yaş ve cinsiyet dağılımı' },
 ];
@@ -243,10 +243,10 @@ const AdvancedReportsPage = () => {
             <Select value={selectedStore} onValueChange={setSelectedStore}>
               <SelectTrigger className="w-44 bg-secondary/50 border-border" data-testid="store-select">
                 <Store className="w-4 h-4 mr-2" />
-                <SelectValue placeholder="Mağaza" />
+                <SelectValue placeholder="Lokasyon" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">Tüm Mağazalar</SelectItem>
+                <SelectItem value="all">Tüm Lokasyonlar</SelectItem>
                 {stores.map((s) => (
                   <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
                 ))}
@@ -395,7 +395,7 @@ const AdvancedReportsPage = () => {
                 {/* Summary Cards */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div className="stat-card">
-                    <div className="stat-label">Toplam Mağaza</div>
+                    <div className="stat-label">Toplam Lokasyon</div>
                     <div className="stat-value">{storeComparison.total_stores}</div>
                   </div>
                   <div className="stat-card">
@@ -518,12 +518,12 @@ const AdvancedReportsPage = () => {
 
                 {/* Detailed Table */}
                 <div className="chart-container">
-                  <div className="chart-title">Detaylı Mağaza Listesi</div>
+                  <div className="chart-title">Detaylı Lokasyon Listesi</div>
                   <div className="overflow-x-auto">
                     <table className="data-table">
                       <thead>
                         <tr>
-                          <th>Mağaza</th>
+                          <th>Lokasyon</th>
                           <th>Konum</th>
                           <th>Toplam Giriş</th>
                           <th>Toplam Çıkış</th>
@@ -573,7 +573,7 @@ const AdvancedReportsPage = () => {
                 {/* Summary */}
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                   <div className="stat-card">
-                    <div className="stat-label">Toplam Mağaza</div>
+                    <div className="stat-label">Toplam Lokasyon</div>
                     <div className="stat-value">{queueAnalysis.total_stores}</div>
                   </div>
                   <div className="stat-card">
@@ -607,7 +607,7 @@ const AdvancedReportsPage = () => {
 
                 {/* Queue Chart */}
                 <div className="chart-container">
-                  <div className="chart-title">Mağaza Kuyruk Durumu</div>
+                  <div className="chart-title">Lokasyon Kuyruk Durumu</div>
                   {renderChart(
                     queueAnalysis.stores?.map(s => ({ 
                       name: s.store_name?.substring(0, 12), 
@@ -627,7 +627,7 @@ const AdvancedReportsPage = () => {
                     <table className="data-table">
                       <thead>
                         <tr>
-                          <th>Mağaza</th>
+                          <th>Lokasyon</th>
                           <th>Kuyruk</th>
                           <th>Eşik</th>
                           <th>Tahmini Bekleme</th>

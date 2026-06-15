@@ -6,6 +6,7 @@ All reports and analytics are generated from this local data warehouse
 import asyncio
 import logging
 import smtplib
+import xml.etree.ElementTree as ET
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timezone, timedelta
@@ -399,10 +400,9 @@ async def collect_queue_snapshot():
 
 
 async def collect_analytics_snapshot():
-    """Collect age/gender analytics using VMS analytics/report API (every 15 minutes).
-    Fetches today 00:00 → now cumulative totals per camera, grouped by store."""
+    """Collect age/gender analytics using VMS fr/analytics/getstats (every 15 minutes).
+    Parses cumulative XML response per camera GUID, grouped by store."""
     try:
-        import httpx
         TR_TZ = timezone(timedelta(hours=3))
         timestamp = datetime.now(TR_TZ)
         date_str = timestamp.strftime('%Y-%m-%d')
@@ -413,98 +413,74 @@ async def collect_analytics_snapshot():
         stores = await db.stores.find(
             {}, {"_id": 0, "id": 1, "name": 1, "analytics_camera_ids": 1, "analytics_camera_id": 1}
         ).to_list(500)
-        cameras = await db.cameras.find({}, {"_id": 0, "name": 1, "camera_vms_id": 1}).to_list(500)
 
-        # camera_vms_id -> camera name (for matching analytics/report rows)
-        vms_id_to_name: Dict[str, str] = {
-            c["camera_vms_id"]: c["name"]
-            for c in cameras if c.get("camera_vms_id") and c.get("name")
-        }
-
-        # Collect all analytics camera VMS IDs across stores
-        all_analytics_cam_ids: List[str] = []
-        for store in stores:
-            cam_ids = list(store.get("analytics_camera_ids") or [])
-            if store.get("analytics_camera_id") and store["analytics_camera_id"] not in cam_ids:
-                cam_ids.append(store["analytics_camera_id"])
-            for vid in cam_ids:
-                if vid and vid not in all_analytics_cam_ids:
-                    all_analytics_cam_ids.append(vid)
-
-        if not all_analytics_cam_ids:
-            logger.info("No analytics camera IDs configured, skipping snapshot")
-            return []
-
-        time_from = f"{date_str}T00:00:00"
-        time_to = timestamp.strftime('%Y-%m-%dT%H:%M:%S')
-
-        age_by_cam: Dict[str, dict] = {}
-        gender_by_cam: Dict[str, dict] = {}
+        # camera GUID → {in, gender_male, gender_female, age_*}
+        analytics_by_cam_id: Dict[str, dict] = {}
 
         for vms in vms_servers:
+            xml_data = await fetch_vms_data(vms, "/rsapi/modules/fr/analytics/getstats")
+            if not xml_data:
+                continue
             try:
-                vms_url = vms["url"].rstrip("/")
-                auth = (vms.get("username", ""), vms.get("password", ""))
-                async with httpx.AsyncClient(timeout=30) as client:
-                    r_age = await client.post(
-                        f"{vms_url}/rsapi/modules/fr/analytics/report",
-                        auth=auth,
-                        json={"timeFrom": time_from, "timeTo": time_to, "reportType": "Age", "cameraIds": all_analytics_cam_ids}
-                    )
-                    if r_age.status_code == 200:
-                        for row in r_age.json().get("rows", []):
-                            cam = row.get("cameraName", "")
-                            if cam not in age_by_cam:
-                                age_by_cam[cam] = {"unknown": 0, "age_0_17": 0, "age_18_24": 0, "age_25_34": 0, "age_35_44": 0, "age_45_54": 0, "age_55_64": 0, "age_65_plus": 0}
-                            for k in age_by_cam[cam]:
-                                age_by_cam[cam][k] += row.get(k, 0) or 0
-
-                    r_gender = await client.post(
-                        f"{vms_url}/rsapi/modules/fr/analytics/report",
-                        auth=auth,
-                        json={"timeFrom": time_from, "timeTo": time_to, "reportType": "Gender", "cameraIds": all_analytics_cam_ids}
-                    )
-                    if r_gender.status_code == 200:
-                        for row in r_gender.json().get("rows", []):
-                            cam = row.get("cameraName", "")
-                            if cam not in gender_by_cam:
-                                gender_by_cam[cam] = {"male": 0, "female": 0}
-                            gender_by_cam[cam]["male"] += row.get("male", 0) or 0
-                            gender_by_cam[cam]["female"] += row.get("female", 0) or 0
+                root = ET.fromstring(xml_data)
+                for cs in root.findall('.//CameraState'):
+                    cam_id = (cs.findtext('CameraID') or '').strip()
+                    if not cam_id:
+                        continue
+                    cam_data = {
+                        "in": 0, "gender_male": 0, "gender_female": 0,
+                        "age_0_17": 0, "age_18_24": 0, "age_25_34": 0,
+                        "age_35_44": 0, "age_45_54": 0, "age_55_64": 0, "age_65_plus": 0
+                    }
+                    for result in cs.findall('.//Result'):
+                        t = result.findtext('Type', '')
+                        v = int(result.findtext('Value', '0') or 0)
+                        if t == 'In':
+                            cam_data['in'] = v
+                        elif t == 'Gender_Male':
+                            cam_data['gender_male'] = v
+                        elif t == 'Gender_Female':
+                            cam_data['gender_female'] = v
+                        elif t == 'Age_0_17':
+                            cam_data['age_0_17'] = v
+                        elif t == 'Age_18_24':
+                            cam_data['age_18_24'] = v
+                        elif t == 'Age_25_34':
+                            cam_data['age_25_34'] = v
+                        elif t == 'Age_35_44':
+                            cam_data['age_35_44'] = v
+                        elif t == 'Age_45_54':
+                            cam_data['age_45_54'] = v
+                        elif t == 'Age_55_64':
+                            cam_data['age_55_64'] = v
+                        elif t == 'Age_65Plus':
+                            cam_data['age_65_plus'] = v
+                    analytics_by_cam_id[cam_id] = cam_data
             except Exception as e:
-                logger.error(f"Analytics snapshot VMS error ({vms.get('name', '')}): {e}")
+                logger.error(f"Analytics getstats parse error ({vms.get('name', '')}): {e}")
 
-        # Aggregate per store
+        # Aggregate per store, matching by camera GUID directly
         snapshots = []
         for store in stores:
             cam_ids = list(store.get("analytics_camera_ids") or [])
             if store.get("analytics_camera_id") and store["analytics_camera_id"] not in cam_ids:
                 cam_ids.append(store["analytics_camera_id"])
 
-            age_counts = {"0-17": 0, "18-24": 0, "25-34": 0, "35-44": 0, "45-54": 0, "55-64": 0, "65+": 0}
+            age_counts = {"0-17": 0, "18-24": 0, "25-34": 0, "35-44": 0, "45-54": 0, "55+": 0}
             gender_counts = {"Male": 0, "Female": 0, "Unknown": 0}
             total_events = 0
 
-            for vms_id in cam_ids:
-                cam_name = vms_id_to_name.get(vms_id)
-                if not cam_name:
-                    continue
-                ag = age_by_cam.get(cam_name, {})
-                gd = gender_by_cam.get(cam_name, {})
-
-                a0 = ag.get("age_0_17", 0); a1 = ag.get("age_18_24", 0)
-                a2 = ag.get("age_25_34", 0); a3 = ag.get("age_35_44", 0)
-                a4 = ag.get("age_45_54", 0); a5 = ag.get("age_55_64", 0)
-                a6 = ag.get("age_65_plus", 0); unk = ag.get("unknown", 0)
-                age_counts["0-17"] += a0; age_counts["18-24"] += a1
-                age_counts["25-34"] += a2; age_counts["35-44"] += a3
-                age_counts["45-54"] += a4; age_counts["55-64"] += a5
-                age_counts["65+"] += a6
-                gender_counts["Male"] += gd.get("male", 0)
-                gender_counts["Female"] += gd.get("female", 0)
-                gender_counts["Unknown"] += unk
-                # total_events from Age report (gender may not be available)
-                total_events += a0 + a1 + a2 + a3 + a4 + a5 + a6 + unk
+            for cam_id in cam_ids:
+                cam = analytics_by_cam_id.get(cam_id, {})
+                gender_counts["Male"] += cam.get("gender_male", 0)
+                gender_counts["Female"] += cam.get("gender_female", 0)
+                age_counts["0-17"] += cam.get("age_0_17", 0)
+                age_counts["18-24"] += cam.get("age_18_24", 0)
+                age_counts["25-34"] += cam.get("age_25_34", 0)
+                age_counts["35-44"] += cam.get("age_35_44", 0)
+                age_counts["45-54"] += cam.get("age_45_54", 0)
+                age_counts["55+"] += cam.get("age_55_64", 0) + cam.get("age_65_plus", 0)
+                total_events += cam.get("in", 0)
 
             snapshots.append({
                 "store_id": store["id"],
@@ -527,7 +503,7 @@ async def collect_analytics_snapshot():
                 for s in snapshots
             ]
             result = await db.analytics_snapshots.bulk_write(operations, ordered=False)
-            logger.info(f"Analytics snapshots: {result.upserted_count} inserted, {result.modified_count} updated ({time_from} → {time_to})")
+            logger.info(f"Analytics snapshots: {result.upserted_count} inserted, {result.modified_count} updated for {date_str} {hour:02d}:{minute:02d}")
             for snap in snapshots:
                 await update_store_health(snap["store_id"], "analytics")
 

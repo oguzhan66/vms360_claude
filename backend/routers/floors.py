@@ -1,5 +1,5 @@
 """Floor Plan Management routes"""
-from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form, Depends
 from typing import List, Optional
 from pydantic import BaseModel, Field
 from datetime import datetime, timezone
@@ -8,6 +8,8 @@ import os
 import base64
 
 from database import db
+from auth import require_auth
+from permissions import get_user_allowed_stores
 
 router = APIRouter(prefix="/floors", tags=["Floors"])
 
@@ -28,11 +30,12 @@ class Zone(BaseModel):
 class FloorBase(BaseModel):
     store_id: str
     name: str
-    floor_number: int = 0  # 0 = ground floor, negative for basement
-    width_meters: float = 50.0  # Real-world width in meters
-    height_meters: float = 30.0  # Real-world height in meters
-    grid_size: float = 2.0  # Heatmap grid size in meters (default 2x2)
-    zones: List[Zone] = []  # Zones for masking heatmap
+    floor_number: int = 0
+    width_meters: float = 50.0
+    height_meters: float = 30.0
+    grid_size: float = 2.0
+    zones: List[Zone] = []
+    group_name: Optional[str] = None
 
 class FloorCreate(FloorBase):
     pass
@@ -43,8 +46,12 @@ class FloorUpdate(BaseModel):
     width_meters: Optional[float] = None
     height_meters: Optional[float] = None
     grid_size: Optional[float] = None
-    plan_image_data: Optional[str] = None  # Base64 encoded image
-    zones: Optional[List[Zone]] = None  # Zones for masking heatmap
+    plan_image_data: Optional[str] = None
+    zones: Optional[List[Zone]] = None
+    group_name: Optional[str] = None
+
+class GroupRenameRequest(BaseModel):
+    new_name: str
 
 class Floor(FloorBase):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -73,7 +80,7 @@ class CameraPositionUpdate(BaseModel):
 # ============== FLOOR CRUD ENDPOINTS ==============
 
 @router.post("", response_model=dict)
-async def create_floor(input: FloorCreate):
+async def create_floor(input: FloorCreate, user: dict = Depends(require_auth)):
     """Create a new floor for a store"""
     # Check if store exists
     store = await db.stores.find_one({"id": input.store_id}, {"_id": 0})
@@ -94,13 +101,22 @@ async def create_floor(input: FloorCreate):
 
 @router.get("", response_model=List[dict])
 async def get_floors(
-    store_id: Optional[str] = Query(None, description="Filter by store ID")
+    store_id: Optional[str] = Query(None, description="Filter by store ID"),
+    user: dict = Depends(require_auth),
 ):
     """Get all floors, optionally filtered by store"""
+    allowed_stores = await get_user_allowed_stores(user)
+
     query = {}
     if store_id:
+        if allowed_stores is not None and store_id not in allowed_stores:
+            return []
         query["store_id"] = store_id
-    
+    elif allowed_stores is not None:
+        if not allowed_stores:
+            return []
+        query["store_id"] = {"$in": list(allowed_stores)}
+
     floors = await db.floors.find(query, {"_id": 0}).to_list(500)
     
     # Add store name to each floor
@@ -133,7 +149,7 @@ async def get_floor(floor_id: str):
 
 
 @router.put("/{floor_id}", response_model=dict)
-async def update_floor(floor_id: str, input: FloorUpdate):
+async def update_floor(floor_id: str, input: FloorUpdate, user: dict = Depends(require_auth)):
     """Update a floor"""
     update_data = {k: v for k, v in input.model_dump().items() if v is not None}
     if not update_data:
@@ -148,8 +164,20 @@ async def update_floor(floor_id: str, input: FloorUpdate):
     return await get_floor(floor_id)
 
 
+@router.put("/groups/{old_name}")
+async def rename_floor_group(old_name: str, req: GroupRenameRequest, user: dict = Depends(require_auth)):
+    result = await db.floors.update_many({"group_name": old_name}, {"$set": {"group_name": req.new_name.strip()}})
+    return {"updated": result.modified_count}
+
+
+@router.delete("/groups/{old_name}")
+async def delete_floor_group(old_name: str, user: dict = Depends(require_auth)):
+    result = await db.floors.update_many({"group_name": old_name}, {"$unset": {"group_name": ""}})
+    return {"updated": result.modified_count}
+
+
 @router.delete("/{floor_id}")
-async def delete_floor(floor_id: str):
+async def delete_floor(floor_id: str, user: dict = Depends(require_auth)):
     """Delete a floor"""
     # First, remove floor_id from all cameras on this floor
     await db.cameras.update_many(

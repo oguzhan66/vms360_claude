@@ -9,6 +9,8 @@ const AuthContext = createContext({
   isAuthenticated: false,
   isAdmin: false,
   isOperator: false,
+  isSuperAdmin: false,
+  tenantId: null,
   loading: true,
 });
 
@@ -38,42 +40,43 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const login = async (username, password) => {
-    const res = await api.post('/auth/login', { username, password });
+  const login = async (username, password, tenantSlug = null) => {
+    const res = await api.post('/auth/login', { username, password, tenant_slug: tenantSlug || undefined });
     const { access_token, refresh_token, user: userData } = res.data;
-    
-    // Store both tokens
+
     localStorage.setItem('access_token', access_token);
     localStorage.setItem('refresh_token', refresh_token);
     localStorage.setItem('user', JSON.stringify(userData));
-    
+
     api.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
-    
+
     setToken(access_token);
     setUser(userData);
-    
+
     return userData;
   };
 
   const logout = async () => {
     try {
-      // Call logout endpoint to revoke refresh token
       await api.post('/auth/logout');
     } catch (e) {
       console.error('Logout error', e);
     }
-    
+
     localStorage.removeItem('access_token');
     localStorage.removeItem('refresh_token');
     localStorage.removeItem('user');
+    localStorage.removeItem('activeTenantId');
     delete api.defaults.headers.common['Authorization'];
     setToken(null);
     setUser(null);
   };
 
   const isAuthenticated = !!user;
-  const isAdmin = user?.role === 'admin';
+  const isSuperAdmin = user?.role === 'super_admin';
+  const isAdmin = user?.role === 'admin' || isSuperAdmin;
   const isOperator = user?.role === 'operator';
+  const tenantId = user?.tenant_id ?? null;
 
   return (
     <AuthContext.Provider value={{
@@ -84,6 +87,8 @@ export const AuthProvider = ({ children }) => {
       isAuthenticated,
       isAdmin,
       isOperator,
+      isSuperAdmin,
+      tenantId,
       loading,
     }}>
       {children}

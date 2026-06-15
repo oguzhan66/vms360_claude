@@ -71,13 +71,13 @@ const CounterPage = () => {
           <div>
             <h1 className="text-xl font-bold">Kisi Sayma</h1>
             <p className="text-sm text-muted-foreground mt-1">
-              Magaza giris-cikis ve doluluk takibi
+              Lokasyon giriş-çıkış ve doluluk takibi
             </p>
           </div>
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
               <Activity className="w-4 h-4 text-emerald-400" />
-              <span className="text-sm font-mono">{filteredData.length} aktif magaza</span>
+              <span className="text-sm font-mono">{filteredData.length} aktif lokasyon</span>
             </div>
           </div>
         </div>
@@ -123,7 +123,7 @@ const CounterPage = () => {
 
         {/* Sort Options */}
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold">Magaza Listesi</h2>
+          <h2 className="text-lg font-semibold">Lokasyon Listesi</h2>
           <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground">Sirala:</span>
             <select 

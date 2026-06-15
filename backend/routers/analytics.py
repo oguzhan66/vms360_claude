@@ -5,43 +5,53 @@ from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 
 from database import db
-from auth import require_auth
+from auth import require_auth, get_tenant_filter
 
 router = APIRouter(prefix="/analytics", tags=["Advanced Analytics"])
 
 
 # ============== HELPER FUNCTIONS ==============
 
-async def get_daily_summaries_for_range(start_date: str, end_date: str, store_ids: List[str] = None) -> List[dict]:
-    """Get daily summaries for a date range, optionally filtered by stores"""
+async def get_daily_summaries_for_range(
+    start_date: str, end_date: str, store_ids: List[str] = None, tenant_filter: dict = None
+) -> List[dict]:
+    """Get daily summaries for a date range, optionally filtered by stores and tenant"""
     query = {"date": {"$gte": start_date, "$lte": end_date}}
     if store_ids:
         query["store_id"] = {"$in": store_ids}
+    if tenant_filter:
+        query.update(tenant_filter)
     return await db.daily_summaries.find(query, {"_id": 0}).sort("date", 1).to_list(10000)
 
 
-async def get_hourly_data_for_date(date_str: str, store_ids: List[str] = None) -> List[dict]:
+async def get_hourly_data_for_date(
+    date_str: str, store_ids: List[str] = None, tenant_filter: dict = None
+) -> List[dict]:
     """Get hourly aggregates for a specific date"""
     query = {"date": date_str}
     if store_ids:
         query["store_id"] = {"$in": store_ids}
+    if tenant_filter:
+        query.update(tenant_filter)
     return await db.hourly_aggregates.find(query, {"_id": 0}).to_list(500)
 
 
-async def get_latest_counter_snapshots(store_ids: List[str] = None) -> List[dict]:
+async def get_latest_counter_snapshots(store_ids: List[str] = None, tenant_filter: dict = None) -> List[dict]:
     """Get most recent counter snapshots"""
-    pipeline = [
-        {"$sort": {"timestamp": -1}},
-        {"$group": {
-            "_id": "$store_id",
-            "latest": {"$first": "$$ROOT"}
-        }},
-        {"$replaceRoot": {"newRoot": "$latest"}},
-        {"$project": {"_id": 0}}
-    ]
+    match = {}
     if store_ids:
-        pipeline.insert(0, {"$match": {"store_id": {"$in": store_ids}}})
-    
+        match["store_id"] = {"$in": store_ids}
+    if tenant_filter:
+        match.update(tenant_filter)
+    pipeline = []
+    if match:
+        pipeline.append({"$match": match})
+    pipeline += [
+        {"$sort": {"timestamp": -1}},
+        {"$group": {"_id": "$store_id", "latest": {"$first": "$$ROOT"}}},
+        {"$replaceRoot": {"newRoot": "$latest"}},
+        {"$project": {"_id": 0}},
+    ]
     return await db.counter_snapshots.aggregate(pipeline).to_list(500)
 
 
@@ -58,11 +68,12 @@ async def get_dashboard_summary(
     from permissions import get_user_allowed_stores
     import logging
     logger = logging.getLogger(__name__)
-    
+
     logger.info(f"Dashboard summary: store_id={store_id}, date_from={date_from}, date_to={date_to}")
-    
+
+    tf = get_tenant_filter(user)
     allowed_stores = await get_user_allowed_stores(user)
-    
+
     # Build store filter
     store_ids = None
     if store_id:
@@ -86,8 +97,8 @@ async def get_dashboard_summary(
         compare_start = compare_end = (now - timedelta(days=1)).strftime("%Y-%m-%d")
     
     # Get data for selected range
-    range_data = await get_daily_summaries_for_range(start_date, end_date, store_ids)
-    compare_data = await get_daily_summaries_for_range(compare_start, compare_end, store_ids)
+    range_data = await get_daily_summaries_for_range(start_date, end_date, store_ids, tf)
+    compare_data = await get_daily_summaries_for_range(compare_start, compare_end, store_ids, tf)
     
     # Calculate totals
     range_visitors = sum(d.get("total_in", 0) for d in range_data)
@@ -95,7 +106,7 @@ async def get_dashboard_summary(
     
     # If no data in daily summaries, get from snapshots
     if range_visitors == 0:
-        query = {"date": {"$gte": start_date, "$lte": end_date}}
+        query = {"date": {"$gte": start_date, "$lte": end_date}, **tf}
         if store_ids:
             query["store_id"] = {"$in": store_ids}
         pipeline = [
@@ -113,7 +124,8 @@ async def get_dashboard_summary(
     avg_occupancy = sum(d.get("avg_occupancy", 0) for d in range_data) / len(range_data) if range_data else 0
     avg_wait = sum(d.get("avg_wait_time_min", 0) for d in range_data) / len(range_data) if range_data else 0
     
-    total_stores = await db.stores.count_documents({} if not store_ids else {"id": {"$in": store_ids}})
+    store_count_q = {**tf} if not store_ids else {"id": {"$in": store_ids}, **tf}
+    total_stores = await db.stores.count_documents(store_count_q)
     
     # Get top performer
     top_store = max(range_data, key=lambda x: x.get("total_in", 0)) if range_data else None
@@ -152,14 +164,15 @@ async def get_hourly_traffic(
     from permissions import get_user_allowed_stores
     import logging
     logger = logging.getLogger(__name__)
-    
+
     logger.info(f"Hourly traffic: store_id={store_id}, date={date}, date_from={date_from}, date_to={date_to}")
-    
+
+    tf = get_tenant_filter(user)
     allowed_stores = await get_user_allowed_stores(user)
-    
+
     if store_id and allowed_stores is not None and store_id not in allowed_stores:
         return {"error": "Yetkisiz mağaza"}
-    
+
     # Determine date range
     now = datetime.now(timezone.utc)
     if date_from and date_to:
@@ -169,11 +182,11 @@ async def get_hourly_traffic(
         start_date = end_date = date
     else:
         start_date = end_date = now.strftime("%Y-%m-%d")
-    
+
     store_ids = [store_id] if store_id else (list(allowed_stores) if allowed_stores else None)
-    
+
     # Get snapshots for the date range
-    query = {"date": {"$gte": start_date, "$lte": end_date}}
+    query = {"date": {"$gte": start_date, "$lte": end_date}, **tf}
     if store_ids:
         query["store_id"] = {"$in": store_ids}
     
@@ -231,21 +244,22 @@ async def get_visitor_trends(
 ):
     """Get visitor trends from local data warehouse"""
     from permissions import get_user_allowed_stores
-    
+
+    tf = get_tenant_filter(user)
     allowed_stores = await get_user_allowed_stores(user)
-    
+
     if store_id and allowed_stores is not None and store_id not in allowed_stores:
         return {"error": "Yetkisiz mağaza"}
-    
+
     now = datetime.now(timezone.utc)
     days = 7 if period == "week" else 30 if period == "month" else 90
-    
+
     start_date = (now - timedelta(days=days)).strftime("%Y-%m-%d")
     end_date = now.strftime("%Y-%m-%d")
-    
+
     store_ids = [store_id] if store_id else (list(allowed_stores) if allowed_stores else None)
-    
-    daily_data = await get_daily_summaries_for_range(start_date, end_date, store_ids)
+
+    daily_data = await get_daily_summaries_for_range(start_date, end_date, store_ids, tf)
     
     # Aggregate by date
     date_totals = defaultdict(lambda: {"in_count": 0, "out_count": 0})
@@ -298,24 +312,25 @@ async def get_period_comparison(
 ):
     """Compare periods from local data warehouse"""
     from permissions import get_user_allowed_stores
-    
+
+    tf = get_tenant_filter(user)
     allowed_stores = await get_user_allowed_stores(user)
-    
+
     if store_id and allowed_stores is not None and store_id not in allowed_stores:
         return {"error": "Yetkisiz mağaza"}
-    
+
     now = datetime.now(timezone.utc)
     days = 7 if compare_type == "week" else 30
-    
+
     current_end = now.strftime("%Y-%m-%d")
     current_start = (now - timedelta(days=days)).strftime("%Y-%m-%d")
     previous_end = (now - timedelta(days=days)).strftime("%Y-%m-%d")
     previous_start = (now - timedelta(days=days*2)).strftime("%Y-%m-%d")
-    
+
     store_ids = [store_id] if store_id else (list(allowed_stores) if allowed_stores else None)
-    
-    current_data = await get_daily_summaries_for_range(current_start, current_end, store_ids)
-    previous_data = await get_daily_summaries_for_range(previous_start, previous_end, store_ids)
+
+    current_data = await get_daily_summaries_for_range(current_start, current_end, store_ids, tf)
+    previous_data = await get_daily_summaries_for_range(previous_start, previous_end, store_ids, tf)
     
     current_total = sum(d.get("total_in", 0) for d in current_data)
     previous_total = sum(d.get("total_in", 0) for d in previous_data)
@@ -478,17 +493,18 @@ async def get_store_comparison(
 ):
     """Compare stores from local data warehouse"""
     from permissions import get_user_allowed_stores
-    
+
+    tf = get_tenant_filter(user)
     allowed_stores = await get_user_allowed_stores(user)
-    
+
     # Get last 7 days of data
     now = datetime.now(timezone.utc)
     start_date = (now - timedelta(days=7)).strftime("%Y-%m-%d")
     end_date = now.strftime("%Y-%m-%d")
-    
+
     store_ids = list(allowed_stores) if allowed_stores else None
-    
-    daily_data = await get_daily_summaries_for_range(start_date, end_date, store_ids)
+
+    daily_data = await get_daily_summaries_for_range(start_date, end_date, store_ids, tf)
     
     # Aggregate by store
     store_totals = defaultdict(lambda: {
@@ -538,16 +554,17 @@ async def get_store_comparison(
 async def get_region_analysis(user: dict = Depends(require_auth)):
     """Analyze by region from local data warehouse"""
     from permissions import get_user_allowed_stores
-    
+
+    tf = get_tenant_filter(user)
     allowed_stores = await get_user_allowed_stores(user)
-    
+
     now = datetime.now(timezone.utc)
     start_date = (now - timedelta(days=7)).strftime("%Y-%m-%d")
     end_date = now.strftime("%Y-%m-%d")
-    
+
     store_ids = list(allowed_stores) if allowed_stores else None
-    
-    daily_data = await get_daily_summaries_for_range(start_date, end_date, store_ids)
+
+    daily_data = await get_daily_summaries_for_range(start_date, end_date, store_ids, tf)
     
     # Aggregate by region
     region_totals = defaultdict(lambda: {"total_in": 0, "store_count": set(), "region_name": ""})
@@ -587,14 +604,15 @@ async def get_region_analysis(user: dict = Depends(require_auth)):
 async def get_capacity_utilization(user: dict = Depends(require_auth)):
     """Get capacity utilization from local data warehouse"""
     from permissions import get_user_allowed_stores
-    
+
+    tf = get_tenant_filter(user)
     allowed_stores = await get_user_allowed_stores(user)
-    
+
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    
+
     store_ids = list(allowed_stores) if allowed_stores else None
-    
-    daily_data = await get_daily_summaries_for_range(today, today, store_ids)
+
+    daily_data = await get_daily_summaries_for_range(today, today, store_ids, tf)
     
     results = []
     optimal = 0
@@ -641,21 +659,22 @@ async def get_forecast(
 ):
     """Forecast based on historical patterns from local data warehouse"""
     from permissions import get_user_allowed_stores
-    
+
+    tf = get_tenant_filter(user)
     allowed_stores = await get_user_allowed_stores(user)
-    
+
     if store_id and allowed_stores is not None and store_id not in allowed_stores:
         return {"error": "Yetkisiz mağaza"}
-    
+
     now = datetime.now(timezone.utc)
-    
+
     # Get last 4 weeks of data to find patterns
     start_date = (now - timedelta(days=28)).strftime("%Y-%m-%d")
     end_date = now.strftime("%Y-%m-%d")
-    
+
     store_ids = [store_id] if store_id else (list(allowed_stores) if allowed_stores else None)
-    
-    daily_data = await get_daily_summaries_for_range(start_date, end_date, store_ids)
+
+    daily_data = await get_daily_summaries_for_range(start_date, end_date, store_ids, tf)
     
     # Calculate average by day of week
     day_averages = defaultdict(list)
@@ -704,18 +723,19 @@ async def get_peak_alerts(
 ):
     """Get peak hour alerts from local data warehouse"""
     from permissions import get_user_allowed_stores
-    
+
+    tf = get_tenant_filter(user)
     allowed_stores = await get_user_allowed_stores(user)
-    
+
     if store_id and allowed_stores is not None and store_id not in allowed_stores:
         return {"error": "Yetkisiz mağaza"}
-    
+
     now = datetime.now(timezone.utc)
     today = now.strftime("%Y-%m-%d")
-    
+
     store_ids = [store_id] if store_id else (list(allowed_stores) if allowed_stores else None)
-    
-    hourly_data = await get_hourly_data_for_date(today, store_ids)
+
+    hourly_data = await get_hourly_data_for_date(today, store_ids, tf)
     
     # Find peak periods
     peak_periods = []

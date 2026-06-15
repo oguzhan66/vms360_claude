@@ -225,7 +225,7 @@ const CamerasPage = () => {
           <div>
             <h1 className="text-xl font-bold text-foreground">Kamera Yönetimi</h1>
             <p className="text-sm text-muted-foreground mt-1">
-              Mağazalara kamera atayın ve yönetin
+              Lokasyonlara kamera atayın ve yönetin
             </p>
           </div>
           <div className="flex gap-2">
@@ -288,13 +288,13 @@ const CamerasPage = () => {
                 </DialogHeader>
                 <form onSubmit={handleSubmit} className="space-y-4">
                   <div>
-                    <Label>Mağaza</Label>
+                    <Label>Lokasyon</Label>
                     <Select 
                       value={form.store_id} 
                       onValueChange={(v) => setForm({ ...form, store_id: v })}
                     >
                       <SelectTrigger className="bg-background border-border" data-testid="camera-store-select">
-                        <SelectValue placeholder="Mağaza seçin" />
+                        <SelectValue placeholder="Lokasyon seçin" />
                       </SelectTrigger>
                       <SelectContent>
                         {stores.map(s => (
@@ -382,10 +382,10 @@ const CamerasPage = () => {
           {/* Store Filter */}
           <Select value={filterStore} onValueChange={setFilterStore}>
             <SelectTrigger className="w-40 h-9 text-sm bg-white dark:bg-slate-700 border-gray-300 dark:border-slate-500 text-gray-900 dark:text-white" data-testid="filter-store">
-              <SelectValue placeholder="Mağaza" />
+              <SelectValue placeholder="Lokasyon" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">Tüm Mağazalar</SelectItem>
+              <SelectItem value="all">Tüm Lokasyonlar</SelectItem>
               {stores.map(s => (
                 <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
               ))}
@@ -555,7 +555,7 @@ const CamerasPage = () => {
             {(searchTerm || filterStore !== 'all' || filterType !== 'all' || filterStatus !== 'all') ? (
               <p className="text-sm mt-1">Filtreleri temizleyerek tüm kameraları görebilirsiniz.</p>
             ) : (
-              <p className="text-sm mt-1">Önce mağaza tanımlayıp sonra kamera ekleyebilirsiniz.</p>
+              <p className="text-sm mt-1">Önce lokasyon tanımlayıp sonra kamera ekleyebilirsiniz.</p>
             )}
           </div>
         )}
@@ -572,7 +572,7 @@ const CamerasPage = () => {
               <strong className="text-foreground">{selectedCameras.length}</strong> kamerayı silmek istediğinize emin misiniz?
             </p>
             <p className="text-sm text-red-500 mt-2">
-              Bu işlem geri alınamaz. Silinen kameralar mağaza atamalarından da kaldırılacaktır.
+              Bu işlem geri alınamaz. Silinen kameralar lokasyon atamalarından da kaldırılacaktır.
             </p>
           </div>
           <DialogFooter>

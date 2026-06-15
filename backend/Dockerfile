@@ -22,4 +22,4 @@ COPY . .
 EXPOSE 8001
 
 # Run the application
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8001"]
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8001", "--timeout-keep-alive", "65", "--log-level", "warning"]

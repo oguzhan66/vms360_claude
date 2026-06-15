@@ -5,11 +5,13 @@ GET  /alerts/stats    — summary stats + hourly + daily breakdown
 GET  /alerts/export   — CSV download
 POST /alerts/send-report — e-mail report
 """
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from typing import Optional
 from datetime import datetime, timezone
 from database import db
+from auth import require_auth
+from permissions import get_user_allowed_stores
 import io, csv, smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -33,13 +35,25 @@ def _alert_out(a: dict) -> dict:
 async def list_alerts(
     date_from: Optional[str] = None,
     date_to:   Optional[str] = None,
-    alert_type: Optional[str] = None,   # counter | queue
-    level:      Optional[str] = None,   # critical | warning
+    alert_type: Optional[str] = None,
+    level:      Optional[str] = None,
     store_id:   Optional[str] = None,
-    status:     Optional[str] = None,   # active | cleared
+    status:     Optional[str] = None,
     limit: int = Query(200, le=1000),
+    user: dict = Depends(require_auth),
 ):
+    allowed_stores = await get_user_allowed_stores(user)
     filt: dict = {}
+
+    # Tenant isolation via allowed store IDs
+    if store_id:
+        if allowed_stores is not None and store_id not in allowed_stores:
+            return {"alerts": [], "total": 0}
+        filt["store_id"] = store_id
+    elif allowed_stores is not None:
+        if not allowed_stores:
+            return {"alerts": [], "total": 0}
+        filt["store_id"] = {"$in": list(allowed_stores)}
 
     if date_from or date_to:
         date_filt: dict = {}
@@ -53,8 +67,6 @@ async def list_alerts(
         filt["alert_type"] = alert_type
     if level in ("critical", "warning"):
         filt["level"] = level
-    if store_id:
-        filt["store_id"] = store_id
     if status == "active":
         filt["cleared_at"] = None
     elif status == "cleared":
@@ -70,8 +82,22 @@ async def alert_stats(
     date_to:    Optional[str] = None,
     alert_type: Optional[str] = None,
     store_id:   Optional[str] = None,
+    user: dict = Depends(require_auth),
 ):
+    allowed_stores = await get_user_allowed_stores(user)
     filt: dict = {}
+
+    if store_id:
+        if allowed_stores is not None and store_id not in allowed_stores:
+            filt["store_id"] = store_id  # will return empty
+        else:
+            filt["store_id"] = store_id
+    elif allowed_stores is not None:
+        if not allowed_stores:
+            filt["store_id"] = {"$in": []}
+        else:
+            filt["store_id"] = {"$in": list(allowed_stores)}
+
     if date_from or date_to:
         df: dict = {}
         if date_from:
@@ -81,8 +107,6 @@ async def alert_stats(
         filt["date"] = df
     if alert_type in ("counter", "queue"):
         filt["alert_type"] = alert_type
-    if store_id:
-        filt["store_id"] = store_id
 
     docs = await db.alerts.find(filt, {"_id": 0}).to_list(5000)
     total = len(docs)
@@ -163,7 +187,7 @@ async def export_alerts_csv(
 
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["Mağaza", "Tür", "Seviye", "Başlangıç", "Bitiş", "Süre (dk)", "Max Değer", "Eşik", "Durum"])
+    writer.writerow(["Lokasyon", "Tür", "Seviye", "Başlangıç", "Bitiş", "Süre (dk)", "Max Değer", "Eşik", "Durum"])
     type_tr  = {"counter": "Kişi Sayma", "queue": "Kuyruk"}
     level_tr = {"critical": "Kritik", "warning": "Uyarı"}
     for d in docs:

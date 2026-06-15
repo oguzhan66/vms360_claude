@@ -107,7 +107,7 @@ const AlertRow = ({ alert, expanded, onToggle }) => {
   );
 };
 
-/* ─── mağaza akordiyon grubu ────────────────────────────────────────────── */
+/* ─── lokasyon akordiyon grubu ────────────────────────────────────────────── */
 const StoreAccordion = ({ storeName, alerts }) => {
   const [open, setOpen] = useState(false);
   const [expandedRow, setExpandedRow] = useState(null);
@@ -249,7 +249,7 @@ const AlertsReportPage = () => {
     finally { setSending(false); }
   };
 
-  /* benzersiz mağazalar (yüklenen veriden) */
+  /* benzersiz lokasyonlar (yüklenen veriden) */
   const storeOptions = Array.from(
     alerts.reduce((m, a) => { if (!m.has(a.store_id)) m.set(a.store_id, a.store_name); return m; }, new Map()),
     ([id, name]) => ({ id, name })
@@ -261,7 +261,7 @@ const AlertsReportPage = () => {
     (storeFilter === 'all' || a.store_id === storeFilter)
   );
 
-  /* mağaza bazlı gruplama */
+  /* lokasyon bazlı gruplama */
   const byStore = filtered.reduce((acc, a) => {
     const key = a.store_id;
     if (!acc[key]) acc[key] = { name: a.store_name, alerts: [] };
@@ -363,7 +363,7 @@ const AlertsReportPage = () => {
           {[
             { id: 'list',   label: 'Uyarı Listesi' },
             { id: 'chart',  label: 'Grafikler' },
-            { id: 'stores', label: 'Mağaza Özeti' },
+            { id: 'stores', label: 'Lokasyon Özeti' },
           ].map(t => (
             <button key={t.id} onClick={() => setActiveTab(t.id)}
               className={`px-4 py-1.5 text-sm rounded-md transition-colors ${
@@ -407,7 +407,7 @@ const AlertsReportPage = () => {
                   color="bg-amber-500 border-amber-400 text-white" />
               </div>
 
-              {/* Mağaza filtresi — dropdown */}
+              {/* Lokasyon filtresi — dropdown */}
               {storeOptions.length > 0 && (
                 <div className="flex items-center gap-1.5">
                   <Store className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
@@ -416,7 +416,7 @@ const AlertsReportPage = () => {
                     onChange={e => setStore(e.target.value)}
                     className="bg-secondary/30 border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:border-primary cursor-pointer"
                   >
-                    <option value="all">Tüm Mağazalar</option>
+                    <option value="all">Tüm Lokasyonlar</option>
                     {storeOptions.map(s => (
                       <option key={s.id} value={s.id}>{s.name}</option>
                     ))}
@@ -425,11 +425,11 @@ const AlertsReportPage = () => {
               )}
 
               <span className="text-xs text-muted-foreground ml-auto">
-                {filtered.length} kayıt · {storeGroups.length} mağaza
+                {filtered.length} kayıt · {storeGroups.length} lokasyon
               </span>
             </div>
 
-            {/* Mağaza akordiyon grupları */}
+            {/* Lokasyon akordiyon grupları */}
             {storeGroups.length > 0 ? (
               <div className="space-y-2">
                 {storeGroups.map(g => (
@@ -495,7 +495,7 @@ const AlertsReportPage = () => {
             <table className="w-full text-sm">
               <thead className="bg-secondary/30 border-b border-border">
                 <tr>
-                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">Mağaza</th>
+                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">Lokasyon</th>
                   <th className="text-center px-4 py-3 font-medium text-red-400">Kritik</th>
                   <th className="text-center px-4 py-3 font-medium text-amber-400">Uyarı</th>
                   <th className="text-center px-4 py-3 font-medium text-foreground">Toplam</th>

@@ -4,12 +4,13 @@ import { useAuth } from '../context/AuthContext';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
-import { Cctv, LogIn, AlertCircle } from 'lucide-react';
+import { LogIn, AlertCircle, Building2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 const LOGO_URL = 'https://customer-assets.emergentagent.com/job_retail-footfall/artifacts/bjfv2q4b_image.png';
 
 const LoginPage = () => {
+  const [tenantSlug, setTenantSlug] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -23,7 +24,7 @@ const LoginPage = () => {
     setLoading(true);
 
     try {
-      const user = await login(username, password);
+      const user = await login(username, password, tenantSlug.trim() || null);
       toast.success(`Hoş geldiniz, ${user.full_name}`);
       navigate('/');
     } catch (e) {
@@ -39,31 +40,49 @@ const LoginPage = () => {
       <div className="w-full max-w-md">
         {/* Logo */}
         <div className="text-center mb-8">
-          <img 
-            src={LOGO_URL} 
-            alt="VMS360 Logo" 
+          <img
+            src={LOGO_URL}
+            alt="VMS360 Logo"
             className="w-20 h-20 mx-auto object-contain mb-4 rounded-xl"
           />
           <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
             VMS360
           </h1>
           <p className="text-sm font-medium text-muted-foreground uppercase tracking-widest mt-1">
-            Retail Panel
+            Stats &amp; LPR
           </p>
         </div>
 
         {/* Login Form */}
         <div className="bg-card border border-border p-6">
           <h2 className="text-lg font-semibold mb-6 text-center">Giriş Yap</h2>
-          
+
           {error && (
             <div className="mb-4 p-3 bg-destructive/10 border border-destructive/30 text-destructive text-sm flex items-center gap-2">
-              <AlertCircle className="w-4 h-4" />
+              <AlertCircle className="w-4 h-4 shrink-0" />
               {error}
             </div>
           )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
+            {/* Tenant Slug */}
+            <div>
+              <Label htmlFor="tenantSlug" className="flex items-center gap-1.5">
+                <Building2 className="w-3.5 h-3.5" />
+                Şirket Kodu
+                <span className="text-muted-foreground font-normal text-xs">(sistem yöneticisi boş bırakır)</span>
+              </Label>
+              <Input
+                id="tenantSlug"
+                type="text"
+                value={tenantSlug}
+                onChange={(e) => setTenantSlug(e.target.value)}
+                placeholder="sirket-kodu"
+                className="bg-secondary/50 border-border"
+                autoComplete="organization"
+              />
+            </div>
+
             <div>
               <Label htmlFor="username">Kullanıcı Adı</Label>
               <Input
@@ -90,9 +109,9 @@ const LoginPage = () => {
                 data-testid="login-password"
               />
             </div>
-            <Button 
-              type="submit" 
-              className="w-full" 
+            <Button
+              type="submit"
+              className="w-full"
               disabled={loading}
               data-testid="login-submit"
             >
@@ -112,7 +131,7 @@ const LoginPage = () => {
         </div>
 
         <p className="text-center text-xs text-muted-foreground mt-4">
-          VMS360 Retail Panel v1.0.0
+          VMS360 Stats &amp; LPR v1.0.0
         </p>
       </div>
     </div>

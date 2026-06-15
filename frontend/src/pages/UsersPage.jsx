@@ -31,6 +31,7 @@ const UsersPage = () => {
   const [regions, setRegions] = useState([]);
   const [cities, setCities] = useState([]);
   const [stores, setStores] = useState([]);
+  const [editStores, setEditStores] = useState([]);
   
   const [form, setForm] = useState({
     username: '',
@@ -128,7 +129,7 @@ const UsersPage = () => {
     }
   };
 
-  const handleEdit = (user) => {
+  const handleEdit = async (user) => {
     setEditingUser(user);
     setEditForm({
       full_name: user.full_name,
@@ -138,6 +139,14 @@ const UsersPage = () => {
       allowed_city_ids: user.allowed_city_ids || [],
       allowed_store_ids: user.allowed_store_ids || []
     });
+    // Fetch stores filtered to this user's tenant
+    try {
+      const headers = user.tenant_id ? { 'X-Tenant-ID': user.tenant_id } : {};
+      const res = await api.get('/stores', { headers });
+      setEditStores(res.data);
+    } catch {
+      setEditStores(stores);
+    }
     setEditDialogOpen(true);
   };
 
@@ -191,7 +200,7 @@ const UsersPage = () => {
   };
 
   // Permission section component
-  const PermissionSection = ({ formState, formSetter, isOperator }) => (
+  const PermissionSection = ({ formState, formSetter, isOperator, storeList = stores }) => (
     <div className="space-y-4 border-t border-border pt-4">
       <div className="flex items-center gap-2 text-sm font-medium">
         <MapPin className="w-4 h-4" />
@@ -200,7 +209,7 @@ const UsersPage = () => {
       
       {!isOperator && (
         <p className="text-xs text-muted-foreground bg-blue-500/10 p-2 rounded">
-          Admin için boş bırakılırsa tüm mağazalara erişim sağlanır.
+          Admin için boş bırakılırsa tüm lokasyonlara erişim sağlanır.
         </p>
       )}
       
@@ -258,10 +267,10 @@ const UsersPage = () => {
       {/* Stores */}
       <div>
         <Label className="text-xs flex items-center gap-2 mb-2">
-          <Store className="w-3 h-3" /> Mağazalar
+          <Store className="w-3 h-3" /> Lokasyonlar
         </Label>
         <div className="grid grid-cols-1 gap-2 max-h-32 overflow-y-auto p-2 bg-secondary/30 rounded">
-          {stores.map(store => (
+          {storeList.map(store => (
             <div key={store.id} className="flex items-center gap-2">
               <Checkbox
                 id={`store-${store.id}`}
@@ -273,7 +282,7 @@ const UsersPage = () => {
               </label>
             </div>
           ))}
-          {stores.length === 0 && <p className="text-xs text-muted-foreground">Mağaza bulunamadı</p>}
+          {storeList.length === 0 && <p className="text-xs text-muted-foreground">Lokasyon bulunamadı</p>}
         </div>
       </div>
     </div>
@@ -286,7 +295,7 @@ const UsersPage = () => {
     const storeCount = (user.allowed_store_ids || []).length;
     
     if (user.role === 'admin' && regionCount === 0 && cityCount === 0 && storeCount === 0) {
-      return 'Tüm mağazalar';
+      return 'Tüm lokasyonlar';
     }
     
     if (regionCount === 0 && cityCount === 0 && storeCount === 0) {
@@ -296,7 +305,7 @@ const UsersPage = () => {
     const parts = [];
     if (regionCount > 0) parts.push(`${regionCount} bölge`);
     if (cityCount > 0) parts.push(`${cityCount} şehir`);
-    if (storeCount > 0) parts.push(`${storeCount} mağaza`);
+    if (storeCount > 0) parts.push(`${storeCount} lokasyon`);
     
     return parts.join(', ');
   };
@@ -401,7 +410,7 @@ const UsersPage = () => {
               <div>
                 <h3 className="font-semibold text-blue-500">Admin</h3>
                 <p className="text-sm text-muted-foreground">
-                  VMS, mağaza, kamera yönetimi ve kullanıcı ekleme yetkisi
+                  VMS, lokasyon, kamera yönetimi ve kullanıcı ekleme yetkisi
                 </p>
               </div>
             </div>
@@ -412,7 +421,7 @@ const UsersPage = () => {
               <div>
                 <h3 className="font-semibold text-emerald-500">Operatör</h3>
                 <p className="text-sm text-muted-foreground">
-                  Sadece yetkili mağazaların verilerini izleyebilir
+                  Sadece yetkili lokasyonların verilerini izleyebilir
                 </p>
               </div>
             </div>
@@ -435,9 +444,11 @@ const UsersPage = () => {
               >
                 <div className="flex items-center gap-4">
                   <div className={`w-12 h-12 flex items-center justify-center ${
-                    user.role === 'admin' ? 'bg-blue-500/20' : 'bg-emerald-500/20'
+                    user.role === 'super_admin' ? 'bg-rose-500/20' : user.role === 'admin' ? 'bg-blue-500/20' : 'bg-emerald-500/20'
                   }`}>
-                    {user.role === 'admin' ? (
+                    {user.role === 'super_admin' ? (
+                      <Shield className="w-6 h-6 text-rose-500" />
+                    ) : user.role === 'admin' ? (
                       <Shield className="w-6 h-6 text-blue-500" />
                     ) : (
                       <User className="w-6 h-6 text-emerald-500" />
@@ -448,9 +459,10 @@ const UsersPage = () => {
                     <p className="text-sm text-muted-foreground">@{user.username}</p>
                     <div className="flex items-center gap-2 mt-1 flex-wrap">
                       <span className={`text-xs px-2 py-0.5 ${
+                        user.role === 'super_admin' ? 'bg-rose-500/20 text-rose-500' :
                         user.role === 'admin' ? 'bg-blue-500/20 text-blue-500' : 'bg-emerald-500/20 text-emerald-500'
                       }`}>
-                        {user.role === 'admin' ? 'Admin' : 'Operatör'}
+                        {user.role === 'super_admin' ? 'Sistem Yöneticisi' : user.role === 'admin' ? 'Admin' : 'Operatör'}
                       </span>
                       {!user.is_active && (
                         <span className="text-xs px-2 py-0.5 bg-red-500/20 text-red-500">
@@ -573,10 +585,11 @@ const UsersPage = () => {
             </div>
             
             {/* Permission Section */}
-            <PermissionSection 
-              formState={editForm} 
-              formSetter={setEditForm} 
+            <PermissionSection
+              formState={editForm}
+              formSetter={setEditForm}
               isOperator={editForm.role === 'operator'}
+              storeList={editStores}
             />
             
             <DialogFooter>

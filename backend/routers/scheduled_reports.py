@@ -139,14 +139,14 @@ async def send_scheduled_report(report: dict, smtp_settings: dict):
         <html>
         <body style="font-family: Arial, sans-serif; padding: 20px; background: #f9fafb;">
             <div style="max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px;">
-                <h2 style="color: #3B82F6; margin-bottom: 20px;">VMS360 Retail Panel</h2>
+                <h2 style="color: #3B82F6; margin-bottom: 20px;">VMS360 Stats & LPR</h2>
                 <h3 style="color: #1F2937;">{report['name']}</h3>
                 <p style="color: #6B7280;">Rapor Tipi: <strong>{report_data['type']}</strong></p>
                 <p style="color: #6B7280;">Tarih: <strong>{datetime.now().strftime('%d.%m.%Y %H:%M')}</strong></p>
                 <hr style="border: 1px solid #E5E7EB; margin: 20px 0;">
                 <p style="color: #6B7280;">Rapor dosyası ekte yer almaktadır.</p>
                 <p style="color: #9CA3AF; font-size: 12px; margin-top: 30px;">
-                    Bu e-posta VMS360 Retail Panel planlı rapor sistemi tarafından otomatik olarak gönderilmiştir.
+                    Bu e-posta VMS360 Stats & LPR planlı rapor sistemi tarafından otomatik olarak gönderilmiştir.
                 </p>
             </div>
         </body>

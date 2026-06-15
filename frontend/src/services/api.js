@@ -25,12 +25,16 @@ const processQueue = (error, token = null) => {
   failedQueue = [];
 };
 
-// Request interceptor - add token to requests
+// Request interceptor - add token + active tenant header
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('access_token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
+    }
+    const activeTenantId = localStorage.getItem('activeTenantId');
+    if (activeTenantId) {
+      config.headers['X-Tenant-ID'] = activeTenantId;
     }
     return config;
   },
@@ -123,6 +127,8 @@ export const vmsApi = {
   updateCameraNames: (id) => api.post(`/vms/${id}/update-camera-names`),
   syncAllCameras: (id) => api.post(`/vms/${id}/sync-all-cameras`),
   syncAllVms: () => api.post('/vms/sync-all'),
+  renameGroup: (oldName, newName) => api.put(`/vms/groups/${encodeURIComponent(oldName)}`, { new_name: newName }),
+  deleteGroup: (name) => api.delete(`/vms/groups/${encodeURIComponent(name)}`),
 };
 
 // Location APIs
@@ -153,6 +159,8 @@ export const storeApi = {
   create: (data) => api.post('/stores', data),
   update: (id, data) => api.put(`/stores/${id}`, data),
   delete: (id) => api.delete(`/stores/${id}`),
+  renameGroup: (oldName, newName) => api.put(`/stores/groups/${encodeURIComponent(oldName)}`, { new_name: newName }),
+  deleteGroup: (name) => api.delete(`/stores/groups/${encodeURIComponent(name)}`),
 };
 
 // Camera APIs
@@ -223,6 +231,17 @@ export const scheduledReportApi = {
   sendNow: (id) => api.post(`/scheduled-reports/${id}/send-now`),
 };
 
+// Tenant Management APIs (super_admin only)
+export const tenantsApi = {
+  getAll: () => api.get('/tenants'),
+  getMy: () => api.get('/tenants/my'),
+  getById: (id) => api.get(`/tenants/${id}`),
+  create: (data) => api.post('/tenants', data),
+  update: (id, data) => api.put(`/tenants/${id}`, data),
+  delete: (id) => api.delete(`/tenants/${id}`),
+  getStats: (id) => api.get(`/tenants/${id}/stats`),
+};
+
 // Floor Management APIs
 export const floorApi = {
   getAll: (storeId = null) => api.get('/floors', { params: { store_id: storeId } }),
@@ -230,6 +249,8 @@ export const floorApi = {
   create: (data) => api.post('/floors', data),
   update: (id, data) => api.put(`/floors/${id}`, data),
   delete: (id) => api.delete(`/floors/${id}`),
+  renameGroup: (oldName, newName) => api.put(`/floors/groups/${encodeURIComponent(oldName)}`, { new_name: newName }),
+  deleteGroup: (name) => api.delete(`/floors/groups/${encodeURIComponent(name)}`),
   uploadPlan: (id, formData) => api.post(`/floors/${id}/upload-plan`, formData, {
     headers: { 'Content-Type': 'multipart/form-data' }
   }),
@@ -256,6 +277,17 @@ export const heatmapApi = {
 export const healthApi = {
   getStatus: () => api.get('/health'),
   getStoresHealth: () => api.get('/health/stores'),
+};
+
+// VMS Event Store APIs — veriler local MongoDB'den gelir (30dk scheduler ile toplanır)
+export const vmsEventsApi = {
+  getAlarms:       (params = {}) => api.get('/event-store/alarms',       { params }),
+  getLPR:          (params = {}) => api.get('/event-store/lpr',          { params }),
+  getLPRByCamera:  (params = {}) => api.get('/event-store/lpr/by-camera', { params }),
+  getTypes:        () => api.get('/event-store/types'),
+  getStatus:       () => api.get('/event-store/status'),
+  collectNow:      (minutes = 35) => api.post(`/event-store/collect-now?minutes=${minutes}`),
+  getLPRParking:   (params = {}) => api.get('/vms-events/lpr/parking', { params }),
 };
 
 export default api;

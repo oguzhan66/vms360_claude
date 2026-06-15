@@ -15,13 +15,13 @@ import {
 import { toast } from 'sonner';
 
 const REPORT_TYPES = [
-  { id: 'counter', label: 'Kişi Sayma', description: 'Mağaza bazlı giriş/çıkış verileri' },
+  { id: 'counter', label: 'Kişi Sayma', description: 'Lokasyon bazlı giriş/çıkış verileri' },
   { id: 'queue', label: 'Kuyruk Raporu', description: 'Kuyruk uzunlukları ve durumları' },
   { id: 'alerts_report', label: 'Uyarı Raporu', description: 'Kritik & uyarı seviyesi olayların özeti' },
   { id: 'analytics', label: 'Yaş/Cinsiyet Analizi', description: 'Demografik veriler' },
   { id: 'hourly_traffic', label: 'Saatlik Trafik', description: 'Saatlik ziyaretçi dağılımı' },
   { id: 'weekday_comparison', label: 'Haftalık Karşılaştırma', description: 'Son 7 gün karşılaştırması' },
-  { id: 'store_comparison', label: 'Mağaza Karşılaştırma', description: 'Mağazalar arası performans' },
+  { id: 'store_comparison', label: 'Lokasyon Karşılaştırma', description: 'Lokasyonlar arası performans' },
   { id: 'queue_analysis', label: 'Kuyruk Analizi (Detaylı)', description: 'Bekleme süreleri' },
   { id: 'demographics', label: 'Demografik Analiz (Detaylı)', description: 'Yaş ve cinsiyet dağılımı' },
   { id: 'all', label: 'Tüm Raporlar', description: 'Tüm analiz raporları' },
@@ -701,7 +701,7 @@ const ScheduledReportsPage = () => {
               {/* Store Selection */}
               <div className="mb-4">
                 <div className="flex items-center justify-between mb-2">
-                  <Label className="text-sm">Mağaza Seçimi</Label>
+                  <Label className="text-sm">Lokasyon Seçimi</Label>
                   <div className="flex gap-2">
                     <Button type="button" variant="ghost" size="sm" onClick={selectAllStores} className="h-6 text-xs">
                       Tümünü Seç
@@ -713,7 +713,7 @@ const ScheduledReportsPage = () => {
                 </div>
                 <div className="bg-secondary/30 rounded-lg p-3 max-h-32 overflow-y-auto space-y-2">
                   {stores.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">Mağaza bulunamadı</p>
+                    <p className="text-xs text-muted-foreground">Lokasyon bulunamadı</p>
                   ) : (
                     stores.map(store => (
                       <div key={store.id} className="flex items-center gap-2">
@@ -730,7 +730,7 @@ const ScheduledReportsPage = () => {
                   )}
                 </div>
                 <p className="text-xs text-muted-foreground mt-1">
-                  {reportForm.store_ids.length === 0 ? 'Tüm mağazalar dahil' : `${reportForm.store_ids.length} mağaza seçili`}
+                  {reportForm.store_ids.length === 0 ? 'Tüm lokasyonlar dahil' : `${reportForm.store_ids.length} lokasyon seçili`}
                 </p>
               </div>
 

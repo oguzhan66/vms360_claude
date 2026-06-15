@@ -15,14 +15,16 @@ import {
   DialogFooter,
   DialogClose
 } from '../components/ui/dialog';
-import { 
-  Layers, Plus, Trash2, Edit, Upload, Camera, 
+import {
+  Layers, Plus, Trash2, Edit, Upload, Camera,
   Move, RotateCw, Eye, MapPin, Save, X, Settings,
-  Hexagon, Pencil, Check, CornerDownLeft
+  Hexagon, Pencil, Check, CornerDownLeft, FolderOpen
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Switch } from '../components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
+
+const UNGROUPED = '__ungrouped__';
 
 const FloorPlansPage = () => {
   const [floors, setFloors] = useState([]);
@@ -30,6 +32,10 @@ const FloorPlansPage = () => {
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingFloor, setEditingFloor] = useState(null);
+  const [filterGroup, setFilterGroup] = useState('');
+  const [newGroupInput, setNewGroupInput] = useState(false);
+  const [renamingGroup, setRenamingGroup] = useState(null);
+  const [renameValue, setRenameValue] = useState('');
   const [selectedFloor, setSelectedFloor] = useState(null);
   const [cameraDialogOpen, setCameraDialogOpen] = useState(false);
   const [availableCameras, setAvailableCameras] = useState([]);
@@ -45,7 +51,8 @@ const FloorPlansPage = () => {
     floor_number: 0,
     width_meters: 50,
     height_meters: 30,
-    grid_size: 2
+    grid_size: 2,
+    group_name: ''
   });
 
   const [cameraForm, setCameraForm] = useState({
@@ -73,7 +80,7 @@ const FloorPlansPage = () => {
     { value: 'corridor', label: 'Koridor', color: '#3b82f6' },
     { value: 'entrance', label: 'Giriş', color: '#22c55e' },
     { value: 'plaza', label: 'Meydan', color: '#f59e0b' },
-    { value: 'shop', label: 'Mağaza', color: '#8b5cf6' },
+    { value: 'shop', label: 'Lokasyon', color: '#8b5cf6' },
     { value: 'restricted', label: 'Yasak Bölge', color: '#ef4444' },
     { value: 'general', label: 'Genel', color: '#6b7280' }
   ];
@@ -110,7 +117,8 @@ const FloorPlansPage = () => {
       }
       setDialogOpen(false);
       setEditingFloor(null);
-      setForm({ store_id: '', name: '', floor_number: 0, width_meters: 50, height_meters: 30, grid_size: 2 });
+      setNewGroupInput(false);
+      setForm({ store_id: '', name: '', floor_number: 0, width_meters: 50, height_meters: 30, grid_size: 2, group_name: '' });
       loadData();
     } catch (e) {
       console.error('Failed to save floor', e);
@@ -120,13 +128,15 @@ const FloorPlansPage = () => {
 
   const handleEdit = (floor) => {
     setEditingFloor(floor);
+    setNewGroupInput(false);
     setForm({
       store_id: floor.store_id,
       name: floor.name,
       floor_number: floor.floor_number || 0,
       width_meters: floor.width_meters || 50,
       height_meters: floor.height_meters || 30,
-      grid_size: floor.grid_size || 2
+      grid_size: floor.grid_size || 2,
+      group_name: floor.group_name || ''
     });
     setDialogOpen(true);
   };
@@ -598,8 +608,50 @@ const FloorPlansPage = () => {
 
   const openNewDialog = () => {
     setEditingFloor(null);
-    setForm({ store_id: '', name: '', floor_number: 0, width_meters: 50, height_meters: 30, grid_size: 2 });
+    setNewGroupInput(false);
+    setForm({ store_id: '', name: '', floor_number: 0, width_meters: 50, height_meters: 30, grid_size: 2, group_name: '' });
     setDialogOpen(true);
+  };
+
+  // Gruplar
+  const existingGroups = [...new Set(floors.map(f => f.group_name).filter(Boolean))].sort();
+  const grouped = floors.reduce((acc, f) => {
+    const key = f.group_name || UNGROUPED;
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(f);
+    return acc;
+  }, {});
+  const groupKeys = Object.keys(grouped).sort((a, b) => {
+    if (a === UNGROUPED) return 1;
+    if (b === UNGROUPED) return -1;
+    return a.localeCompare(b);
+  });
+  const visibleKeys = filterGroup ? groupKeys.filter(k => k === filterGroup) : groupKeys;
+
+  const handleRenameGroupConfirm = async (oldName) => {
+    const newName = renameValue.trim();
+    if (!newName || newName === oldName) { setRenamingGroup(null); return; }
+    try {
+      await floorApi.renameGroup(oldName, newName);
+      toast.success(`Grup "${oldName}" → "${newName}" olarak yeniden adlandırıldı`);
+      setRenamingGroup(null);
+      if (filterGroup === oldName) setFilterGroup(newName);
+      loadData();
+    } catch (e) {
+      toast.error('Yeniden adlandırma başarısız');
+    }
+  };
+
+  const handleDeleteGroup = async (groupName) => {
+    if (!window.confirm(`"${groupName}" grubunu silmek istiyor musunuz? Gruptaki öğeler grupsuz kalacak.`)) return;
+    try {
+      await floorApi.deleteGroup(groupName);
+      toast.success(`"${groupName}" grubu silindi`);
+      if (filterGroup === groupName) setFilterGroup('');
+      loadData();
+    } catch (e) {
+      toast.error('Grup silme başarısız');
+    }
   };
 
   const getStoreName = (storeId) => {
@@ -612,9 +664,9 @@ const FloorPlansPage = () => {
       <div className="page-header">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-bold">Kat Plani Yonetimi</h1>
+            <h1 className="text-xl font-bold">Bölge Planları</h1>
             <p className="text-sm text-muted-foreground mt-1">
-              Magazalarin kat planlarini ve kamera konumlarini yonetin
+              Bölge planlarını ve kamera konumlarını yönetin
             </p>
           </div>
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -629,15 +681,48 @@ const FloorPlansPage = () => {
                 <DialogTitle>{editingFloor ? 'Kat Duzenle' : 'Yeni Kat Ekle'}</DialogTitle>
               </DialogHeader>
               <form onSubmit={handleSubmit} className="space-y-4">
+                {/* Grup seçimi */}
                 <div>
-                  <Label>Magaza</Label>
-                  <Select 
-                    value={form.store_id} 
+                  <Label>Grup</Label>
+                  {!newGroupInput ? (
+                    <select
+                      value={form.group_name}
+                      onChange={e => {
+                        if (e.target.value === '__new__') { setNewGroupInput(true); setForm({ ...form, group_name: '' }); }
+                        else setForm({ ...form, group_name: e.target.value });
+                      }}
+                      className="w-full h-9 px-3 rounded-md bg-secondary/50 border border-white/10 text-sm"
+                    >
+                      <option value="">— Grupsuz —</option>
+                      {existingGroups.map(g => <option key={g} value={g}>{g}</option>)}
+                      <option value="__new__">+ Yeni grup oluştur...</option>
+                    </select>
+                  ) : (
+                    <div className="flex gap-2">
+                      <Input
+                        autoFocus
+                        placeholder="Grup adı"
+                        value={form.group_name}
+                        onChange={e => setForm({ ...form, group_name: e.target.value })}
+                        className="bg-secondary/50 border-white/10"
+                      />
+                      <Button type="button" variant="outline" size="sm" className="border-white/10"
+                        onClick={() => { setNewGroupInput(false); setForm({ ...form, group_name: '' }); }}>
+                        <X className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <Label>Lokasyon</Label>
+                  <Select
+                    value={form.store_id}
                     onValueChange={(v) => setForm({ ...form, store_id: v })}
                     disabled={!!editingFloor}
                   >
                     <SelectTrigger className="bg-secondary/50 border-white/10">
-                      <SelectValue placeholder="Magaza secin" />
+                      <SelectValue placeholder="Lokasyon seçin" />
                     </SelectTrigger>
                     <SelectContent>
                       {stores.map(s => (
@@ -723,115 +808,121 @@ const FloorPlansPage = () => {
       </div>
 
       <div className="page-content">
+        {/* Grup filtresi */}
+        {existingGroups.length > 0 && (
+          <div className="flex items-center gap-2 mb-5 flex-wrap">
+            <span className="text-xs text-muted-foreground font-medium">Grup Filtresi:</span>
+            <button onClick={() => setFilterGroup('')}
+              className={`text-xs px-3 py-1 rounded-full border transition-colors ${!filterGroup ? 'bg-primary text-primary-foreground border-primary' : 'border-border text-muted-foreground hover:border-primary/50'}`}>
+              Tümü ({floors.length})
+            </button>
+            {existingGroups.map(g => (
+              <button key={g} onClick={() => setFilterGroup(filterGroup === g ? '' : g)}
+                className={`text-xs px-3 py-1 rounded-full border transition-colors ${filterGroup === g ? 'bg-primary text-primary-foreground border-primary' : 'border-border text-muted-foreground hover:border-primary/50'}`}>
+                {g} ({grouped[g]?.length || 0})
+              </button>
+            ))}
+            {grouped[UNGROUPED] && (
+              <button onClick={() => setFilterGroup(filterGroup === UNGROUPED ? '' : UNGROUPED)}
+                className={`text-xs px-3 py-1 rounded-full border transition-colors ${filterGroup === UNGROUPED ? 'bg-primary text-primary-foreground border-primary' : 'border-border text-muted-foreground hover:border-primary/50'}`}>
+                Grupsuz ({grouped[UNGROUPED].length})
+              </button>
+            )}
+          </div>
+        )}
+
         {loading ? (
           <div className="space-y-4">
-            {[...Array(3)].map((_, i) => (
-              <div key={i} className="store-card loading-skeleton h-24" />
-            ))}
+            {[...Array(3)].map((_, i) => <div key={i} className="store-card loading-skeleton h-24" />)}
           </div>
         ) : floors.length > 0 ? (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {floors.map((floor) => (
-              <div 
-                key={floor.id} 
-                className="store-card"
-                data-testid={`floor-card-${floor.id}`}
-              >
-                <div className="flex gap-4">
-                  {/* Floor Plan Preview */}
-                  <div className="flex-shrink-0">
-                    {floor.plan_image_data ? (
-                      <div className="w-40 h-28 rounded-lg overflow-hidden border border-white/10 bg-secondary/30">
-                        <img 
-                          src={floor.plan_image_data} 
-                          alt={floor.name}
-                          className="w-full h-full object-cover"
-                        />
-                      </div>
-                    ) : (
-                      <div className="w-40 h-28 rounded-lg border border-dashed border-white/20 bg-secondary/20 flex flex-col items-center justify-center">
-                        <Layers className="w-8 h-8 text-muted-foreground/30 mb-1" />
-                        <span className="text-xs text-muted-foreground">Plan Yok</span>
-                      </div>
-                    )}
-                  </div>
-                  
-                  {/* Floor Info */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <h3 className="font-semibold text-base">{floor.name}</h3>
-                        <div className="flex items-center gap-1 text-sm text-muted-foreground mt-1">
-                          <MapPin className="w-3 h-3" />
-                          <span>{floor.store_name || getStoreName(floor.store_id)}</span>
-                          <span className="text-xs ml-2 px-1.5 py-0.5 bg-secondary rounded">
-                            Kat {floor.floor_number >= 0 ? floor.floor_number : `B${Math.abs(floor.floor_number)}`}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-3 text-xs text-muted-foreground mt-2">
-                          <span className="flex items-center gap-1">
-                            <span className="font-medium">{floor.width_meters}m x {floor.height_meters}m</span>
-                          </span>
-                          <span>Izgara: {floor.grid_size}m</span>
+          <div className="space-y-6">
+            {visibleKeys.map(groupKey => (
+              <div key={groupKey}>
+                {/* Grup başlığı */}
+                <div className="flex items-center gap-2 mb-3">
+                  <FolderOpen className="w-4 h-4 text-primary/70" />
+                  {renamingGroup === groupKey ? (
+                    <>
+                      <input autoFocus value={renameValue}
+                        onChange={e => setRenameValue(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') handleRenameGroupConfirm(groupKey); if (e.key === 'Escape') setRenamingGroup(null); }}
+                        className="text-sm font-semibold bg-transparent border-b border-primary outline-none px-1 w-40"
+                      />
+                      <button onClick={() => handleRenameGroupConfirm(groupKey)} className="text-green-400 hover:text-green-300"><Check className="w-3.5 h-3.5" /></button>
+                      <button onClick={() => setRenamingGroup(null)} className="text-muted-foreground hover:text-foreground"><X className="w-3.5 h-3.5" /></button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-sm font-semibold text-foreground/80">
+                        {groupKey === UNGROUPED ? 'Grupsuz' : groupKey}
+                      </span>
+                      <span className="text-xs text-muted-foreground">({grouped[groupKey].length})</span>
+                      {groupKey !== UNGROUPED && (
+                        <>
+                          <button onClick={() => { setRenamingGroup(groupKey); setRenameValue(groupKey); }} className="text-muted-foreground hover:text-primary ml-1"><Pencil className="w-3 h-3" /></button>
+                          <button onClick={() => handleDeleteGroup(groupKey)} className="text-muted-foreground hover:text-red-400"><Trash2 className="w-3 h-3" /></button>
+                        </>
+                      )}
+                    </>
+                  )}
+                  <div className="flex-1 h-px bg-border ml-1" />
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {grouped[groupKey].map((floor) => (
+                    <div key={floor.id} className="store-card" data-testid={`floor-card-${floor.id}`}>
+                      <div className="flex gap-4">
+                        <div className="flex-shrink-0">
                           {floor.plan_image_data ? (
-                            <span className="text-green-500 flex items-center gap-1">
-                              <div className="w-2 h-2 bg-green-500 rounded-full" />
-                              Plan yüklendi
-                            </span>
+                            <div className="w-40 h-28 rounded-lg overflow-hidden border border-white/10 bg-secondary/30">
+                              <img src={floor.plan_image_data} alt={floor.name} className="w-full h-full object-cover" />
+                            </div>
                           ) : (
-                            <span className="text-amber-500">Plan yüklenmedi</span>
+                            <div className="w-40 h-28 rounded-lg border border-dashed border-white/20 bg-secondary/20 flex flex-col items-center justify-center">
+                              <Layers className="w-8 h-8 text-muted-foreground/30 mb-1" />
+                              <span className="text-xs text-muted-foreground">Plan Yok</span>
+                            </div>
                           )}
                         </div>
+                        <div className="flex-1 min-w-0">
+                          <h3 className="font-semibold text-base">{floor.name}</h3>
+                          <div className="flex items-center gap-1 text-sm text-muted-foreground mt-1">
+                            <MapPin className="w-3 h-3" />
+                            <span>{floor.store_name || getStoreName(floor.store_id)}</span>
+                            <span className="text-xs ml-2 px-1.5 py-0.5 bg-secondary rounded">
+                              Kat {floor.floor_number >= 0 ? floor.floor_number : `B${Math.abs(floor.floor_number)}`}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-3 text-xs text-muted-foreground mt-2">
+                            <span className="font-medium">{floor.width_meters}m x {floor.height_meters}m</span>
+                            <span>Izgara: {floor.grid_size}m</span>
+                            {floor.plan_image_data
+                              ? <span className="text-green-500 flex items-center gap-1"><div className="w-2 h-2 bg-green-500 rounded-full" />Plan yüklendi</span>
+                              : <span className="text-amber-500">Plan yüklenmedi</span>}
+                          </div>
+                          <div className="flex items-center gap-2 mt-3">
+                            <label className="cursor-pointer">
+                              <input type="file" accept="image/jpeg,image/png,image/jpg" className="hidden"
+                                onChange={(e) => { if (e.target.files?.[0]) handleUploadPlan(floor.id, e.target.files[0]); }} />
+                              <Button variant="outline" size="sm" className="border-white/10" asChild>
+                                <span><Upload className="w-4 h-4 mr-1" />Plan Yükle</span>
+                              </Button>
+                            </label>
+                            <Button variant="outline" size="sm" onClick={() => openCameraDialog(floor)} className="border-white/10">
+                              <Camera className="w-4 h-4 mr-1" />Düzenle
+                            </Button>
+                            <Button variant="outline" size="sm" onClick={() => handleEdit(floor)} className="border-white/10">
+                              <Edit className="w-4 h-4" />
+                            </Button>
+                            <Button variant="outline" size="sm" onClick={() => handleDelete(floor.id)} className="border-white/10 text-red-400 hover:text-red-300">
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        </div>
                       </div>
                     </div>
-                    
-                    {/* Action Buttons */}
-                    <div className="flex items-center gap-2 mt-3">
-                      <label className="cursor-pointer">
-                        <input
-                          type="file"
-                          accept="image/jpeg,image/png,image/jpg"
-                          className="hidden"
-                          onChange={(e) => {
-                            if (e.target.files?.[0]) {
-                              handleUploadPlan(floor.id, e.target.files[0]);
-                            }
-                          }}
-                        />
-                        <Button variant="outline" size="sm" className="border-white/10" asChild>
-                          <span>
-                            <Upload className="w-4 h-4 mr-1" />
-                            Plan Yükle
-                          </span>
-                        </Button>
-                      </label>
-                      <Button 
-                        variant="outline" 
-                        size="sm"
-                        onClick={() => openCameraDialog(floor)}
-                        className="border-white/10"
-                      >
-                        <Camera className="w-4 h-4 mr-1" />
-                        Düzenle
-                      </Button>
-                      <Button 
-                        variant="outline" 
-                        size="sm"
-                        onClick={() => handleEdit(floor)}
-                        className="border-white/10"
-                      >
-                        <Edit className="w-4 h-4" />
-                      </Button>
-                      <Button 
-                        variant="outline" 
-                        size="sm"
-                        onClick={() => handleDelete(floor.id)}
-                        className="border-white/10 text-red-400 hover:text-red-300"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  </div>
+                  ))}
                 </div>
               </div>
             ))}
@@ -840,7 +931,7 @@ const FloorPlansPage = () => {
           <div className="text-center py-16 text-muted-foreground">
             <Layers className="w-12 h-12 mx-auto mb-4 opacity-50" />
             <p>Henüz kat planı eklenmedi.</p>
-            <p className="text-sm mt-1">Önce mağaza seçin, sonra katın boyutlarını ve planını yükleyin.</p>
+            <p className="text-sm mt-1">Önce lokasyon seçin, sonra katın boyutlarını ve planını yükleyin.</p>
           </div>
         )}
       </div>

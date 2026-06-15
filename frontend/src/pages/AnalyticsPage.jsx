@@ -156,7 +156,7 @@ const AnalyticsPage = () => {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-bold">Yaş / Cinsiyet Analizi</h1>
-            <p className="text-sm text-muted-foreground mt-1">Mağaza bazlı demografik veriler</p>
+            <p className="text-sm text-muted-foreground mt-1">Lokasyon bazlı demografik veriler</p>
           </div>
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 bg-secondary/50 border border-border rounded-lg px-3 py-1.5">
@@ -179,7 +179,7 @@ const AnalyticsPage = () => {
             </div>
             <div className="flex items-center gap-2">
               <Activity className="w-4 h-4 text-purple-400" />
-              <span className="text-sm font-mono">{filteredData.length} mağaza</span>
+              <span className="text-sm font-mono">{filteredData.length} lokasyon</span>
             </div>
           </div>
         </div>
@@ -262,9 +262,9 @@ const AnalyticsPage = () => {
           </div>
         )}
 
-        {/* Mağaza Listesi */}
+        {/* Lokasyon Listesi */}
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold">Mağaza Listesi</h2>
+          <h2 className="text-lg font-semibold">Lokasyon Listesi</h2>
           <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground">Sırala:</span>
             <select

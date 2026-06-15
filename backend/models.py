@@ -1,8 +1,53 @@
-"""Pydantic models for VMS360 Retail Panel"""
+"""Pydantic models for VMS360 Stats & LPR"""
 from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional
 from datetime import datetime, timezone
 import uuid
+
+
+# ============== TENANT MODELS ==============
+
+class Tenant(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    slug: str
+    plan: str = "basic"  # basic, pro, enterprise
+    max_stores: int = 10
+    max_cameras: int = 50
+    is_active: bool = True
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class TenantCreate(BaseModel):
+    name: str
+    slug: str
+    plan: str = "basic"
+    max_stores: int = 10
+    max_cameras: int = 50
+
+
+class TenantUpdate(BaseModel):
+    name: Optional[str] = None
+    slug: Optional[str] = None
+    plan: Optional[str] = None
+    max_stores: Optional[int] = None
+    max_cameras: Optional[int] = None
+    is_active: Optional[bool] = None
+
+
+class TenantResponse(BaseModel):
+    id: str
+    name: str
+    slug: str
+    plan: str
+    max_stores: int
+    max_cameras: int
+    is_active: bool
+    created_at: datetime
+    store_count: int = 0
+    camera_count: int = 0
+    user_count: int = 0
 
 
 # ============== USER MODELS ==============
@@ -13,7 +58,8 @@ class User(BaseModel):
     username: str
     password_hash: str
     full_name: str
-    role: str = "operator"  # admin, operator
+    role: str = "operator"  # super_admin, admin, operator
+    tenant_id: Optional[str] = None  # None only for super_admin
     is_active: bool = True
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     # Permission fields - empty list means all access for admin
@@ -27,6 +73,7 @@ class UserCreate(BaseModel):
     password: str
     full_name: str
     role: str = "operator"
+    tenant_id: Optional[str] = None
     allowed_region_ids: List[str] = Field(default_factory=list)
     allowed_city_ids: List[str] = Field(default_factory=list)
     allowed_store_ids: List[str] = Field(default_factory=list)
@@ -35,6 +82,7 @@ class UserCreate(BaseModel):
 class UserLogin(BaseModel):
     username: str
     password: str
+    tenant_slug: Optional[str] = None
 
 
 class UserResponse(BaseModel):
@@ -42,6 +90,7 @@ class UserResponse(BaseModel):
     username: str
     full_name: str
     role: str
+    tenant_id: Optional[str] = None
     is_active: bool
     allowed_region_ids: List[str] = Field(default_factory=list)
     allowed_city_ids: List[str] = Field(default_factory=list)
@@ -52,6 +101,7 @@ class UserUpdate(BaseModel):
     full_name: Optional[str] = None
     role: Optional[str] = None
     password: Optional[str] = None
+    tenant_id: Optional[str] = None
     allowed_region_ids: Optional[List[str]] = None
     allowed_city_ids: Optional[List[str]] = None
     allowed_store_ids: Optional[List[str]] = None
@@ -62,6 +112,8 @@ class UserUpdate(BaseModel):
 class VMSServer(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    tenant_id: Optional[str] = None
+    group_name: Optional[str] = None
     name: str
     url: str
     username: str
@@ -75,6 +127,8 @@ class VMSServerCreate(BaseModel):
     url: str
     username: str
     password: Optional[str] = ""
+    tenant_id: Optional[str] = None
+    group_name: Optional[str] = None
 
 
 class VMSServerUpdate(BaseModel):
@@ -83,6 +137,7 @@ class VMSServerUpdate(BaseModel):
     username: Optional[str] = None
     password: Optional[str] = None
     is_active: Optional[bool] = None
+    group_name: Optional[str] = None
 
 
 class ImportCamerasRequest(BaseModel):
@@ -94,6 +149,7 @@ class ImportCamerasRequest(BaseModel):
 class Region(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    tenant_id: Optional[str] = None
     name: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -101,6 +157,7 @@ class Region(BaseModel):
 class City(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    tenant_id: Optional[str] = None
     region_id: str
     name: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -109,6 +166,7 @@ class City(BaseModel):
 class District(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    tenant_id: Optional[str] = None
     city_id: str
     name: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -124,6 +182,8 @@ class LocationCreate(BaseModel):
 class Store(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    tenant_id: Optional[str] = None
+    group_name: Optional[str] = None
     name: str
     district_id: str
     vms_id: str
@@ -149,6 +209,8 @@ class StoreCreate(BaseModel):
     counter_camera_ids: List[str] = []
     queue_camera_ids: List[str] = []
     analytics_camera_ids: List[str] = []
+    tenant_id: Optional[str] = None
+    group_name: Optional[str] = None
 
 
 class StoreUpdate(BaseModel):
@@ -160,6 +222,7 @@ class StoreUpdate(BaseModel):
     counter_camera_ids: Optional[List[str]] = None
     queue_camera_ids: Optional[List[str]] = None
     analytics_camera_ids: Optional[List[str]] = None
+    group_name: Optional[str] = None
 
 
 # ============== CAMERA MODELS ==============
@@ -167,6 +230,7 @@ class StoreUpdate(BaseModel):
 class Camera(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    tenant_id: Optional[str] = None
     store_id: str
     camera_vms_id: str
     name: str
@@ -181,6 +245,7 @@ class CameraCreate(BaseModel):
     name: str
     type: str = "counter"
     is_active: bool = True
+    tenant_id: Optional[str] = None
 
 
 # ============== SETTINGS MODELS ==============
@@ -188,11 +253,16 @@ class CameraCreate(BaseModel):
 class Settings(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = "global_settings"
+    tenant_id: Optional[str] = None
     refresh_interval: int = 30
     capacity_warning_percent: int = 80
     capacity_critical_percent: int = 95
     email_notifications: bool = False
     notification_email: Optional[str] = None
+    person_count_interval: int = 5    # dakika, 1-60
+    analytics_interval: int = 15      # dakika, 5-60
+    data_retention_days: int = 90     # gün: 30/90/180/365/730
+    disabled_event_types: List[str] = []  # boş = tümünü topla
 
 
 # ============== SMTP & SCHEDULED REPORTS MODELS ==============

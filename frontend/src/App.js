@@ -3,30 +3,25 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "sonner";
 import { ThemeProvider } from "./context/ThemeContext";
 import { AuthProvider, useAuth } from "./context/AuthContext";
+import { TenantProvider } from "./context/TenantContext";
 
 // Pages
 import LoginPage from "./pages/LoginPage";
 import Dashboard from "./pages/Dashboard";
-import CounterPage from "./pages/CounterPage";
-import QueuePage from "./pages/QueuePage";
-import AnalyticsPage from "./pages/AnalyticsPage";
 import ReportsPage from "./pages/ReportsPage";
-import AdvancedReportsPage from "./pages/AdvancedReportsPage";
-import AdvancedAnalyticsPage from "./pages/AdvancedAnalyticsPage";
 import ScheduledReportsPage from "./pages/ScheduledReportsPage";
 import VMSPage from "./pages/VMSPage";
+import FloorPlansPage from "./pages/FloorPlansPage";
+import AlarmHeatmapPage from "./pages/AlarmHeatmapPage";
 import StoresPage from "./pages/StoresPage";
 import CamerasPage from "./pages/CamerasPage";
 import UsersPage from "./pages/UsersPage";
 import SettingsPage from "./pages/SettingsPage";
-import FloorPlansPage from "./pages/FloorPlansPage";
-import HeatmapPage from "./pages/HeatmapPage";
-import DensityHeatmapPage from "./pages/DensityHeatmapPage";
-import AlertsReportPage from "./pages/AlertsReportPage";
+import TenantsPage from "./pages/TenantsPage";
 
 // Protected Route Component
-const ProtectedRoute = ({ children, adminOnly = false }) => {
-  const { isAuthenticated, isAdmin, loading } = useAuth();
+const ProtectedRoute = ({ children, adminOnly = false, superAdminOnly = false }) => {
+  const { isAuthenticated, isAdmin, isSuperAdmin, loading } = useAuth();
 
   if (loading) {
     return (
@@ -41,6 +36,10 @@ const ProtectedRoute = ({ children, adminOnly = false }) => {
 
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
+  }
+
+  if (superAdminOnly && !isSuperAdmin) {
+    return <Navigate to="/" replace />;
   }
 
   if (adminOnly && !isAdmin) {
@@ -85,34 +84,19 @@ function AppRoutes() {
           <Dashboard />
         </ProtectedRoute>
       } />
-      <Route path="/counter" element={
+      <Route path="/floor-plans" element={
         <ProtectedRoute>
-          <CounterPage />
+          <FloorPlansPage />
         </ProtectedRoute>
       } />
-      <Route path="/queue" element={
+      <Route path="/alarm-heatmap" element={
         <ProtectedRoute>
-          <QueuePage />
-        </ProtectedRoute>
-      } />
-      <Route path="/analytics" element={
-        <ProtectedRoute>
-          <AnalyticsPage />
+          <AlarmHeatmapPage />
         </ProtectedRoute>
       } />
       <Route path="/reports" element={
         <ProtectedRoute>
           <ReportsPage />
-        </ProtectedRoute>
-      } />
-      <Route path="/advanced-reports" element={
-        <ProtectedRoute>
-          <AdvancedReportsPage />
-        </ProtectedRoute>
-      } />
-      <Route path="/advanced-analytics" element={
-        <ProtectedRoute>
-          <AdvancedAnalyticsPage />
         </ProtectedRoute>
       } />
       <Route path="/scheduled-reports" element={
@@ -121,12 +105,13 @@ function AppRoutes() {
         </ProtectedRoute>
       } />
 
-      {/* Admin Only Routes */}
+      {/* Super Admin Only */}
       <Route path="/vms" element={
-        <ProtectedRoute adminOnly>
+        <ProtectedRoute superAdminOnly>
           <VMSPage />
         </ProtectedRoute>
       } />
+      {/* Admin + Super Admin */}
       <Route path="/stores" element={
         <ProtectedRoute adminOnly>
           <StoresPage />
@@ -147,24 +132,11 @@ function AppRoutes() {
           <SettingsPage />
         </ProtectedRoute>
       } />
-      <Route path="/floor-plans" element={
-        <ProtectedRoute adminOnly>
-          <FloorPlansPage />
-        </ProtectedRoute>
-      } />
-      <Route path="/heatmap" element={
-        <ProtectedRoute>
-          <HeatmapPage />
-        </ProtectedRoute>
-      } />
-      <Route path="/density" element={
-        <ProtectedRoute>
-          <DensityHeatmapPage />
-        </ProtectedRoute>
-      } />
-      <Route path="/alerts" element={
-        <ProtectedRoute>
-          <AlertsReportPage />
+
+      {/* Super Admin Only Routes */}
+      <Route path="/tenants" element={
+        <ProtectedRoute superAdminOnly>
+          <TenantsPage />
         </ProtectedRoute>
       } />
 
@@ -178,6 +150,7 @@ function App() {
   return (
     <ThemeProvider defaultTheme="dark">
       <AuthProvider>
+        <TenantProvider>
         <div className="App" data-testid="app-container">
           <BrowserRouter>
             <AppRoutes />
@@ -193,6 +166,7 @@ function App() {
             }}
           />
         </div>
+        </TenantProvider>
       </AuthProvider>
     </ThemeProvider>
   );

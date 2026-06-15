@@ -395,10 +395,10 @@ const AdvancedAnalyticsPage = () => {
             {/* Store Filter */}
             <Select value={selectedStore} onValueChange={setSelectedStore}>
               <SelectTrigger className="w-40 h-9 text-sm bg-white dark:bg-slate-700 border-gray-300 dark:border-slate-500 text-gray-900 dark:text-white hover:bg-gray-50 dark:hover:bg-slate-600" data-testid="filter-store">
-                <SelectValue placeholder="Mağaza" />
+                <SelectValue placeholder="Lokasyon" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">Tüm Mağazalar</SelectItem>
+                <SelectItem value="all">Tüm Lokasyonlar</SelectItem>
                 {stores.map(s => (
                   <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
                 ))}
@@ -472,7 +472,7 @@ const AdvancedAnalyticsPage = () => {
             <TabsTrigger value="overview">Genel Bakış</TabsTrigger>
             <TabsTrigger value="traffic">Trafik Analizi</TabsTrigger>
             <TabsTrigger value="demographics">Demografi</TabsTrigger>
-            <TabsTrigger value="stores">Mağaza Performansı</TabsTrigger>
+            <TabsTrigger value="stores">Lokasyon Performansı</TabsTrigger>
             <TabsTrigger value="forecast">Tahmin & Uyarılar</TabsTrigger>
             <TabsTrigger value="queue">Kuyruk Analizi</TabsTrigger>
           </TabsList>
@@ -499,7 +499,7 @@ const AdvancedAnalyticsPage = () => {
                 icon={Clock}
               />
               <StatCard 
-                title="Toplam Mağaza" 
+                title="Toplam Lokasyon" 
                 value={dashboardSummary?.quick_stats?.total_stores || 0}
                 icon={MapPin}
               />
@@ -771,7 +771,7 @@ const AdvancedAnalyticsPage = () => {
               {/* Store Ranking */}
               <Card className="bg-card/50 border-white/10">
                 <CardHeader>
-                  <CardTitle className="text-sm">Mağaza Performans Sıralaması</CardTitle>
+                  <CardTitle className="text-sm">Lokasyon Performans Sıralaması</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-3 max-h-80 overflow-y-auto">
@@ -852,7 +852,7 @@ const AdvancedAnalyticsPage = () => {
                       </div>
                       <div className="grid grid-cols-2 gap-2 text-xs">
                         <div>
-                          <p className="text-muted-foreground">Mağaza Sayısı</p>
+                          <p className="text-muted-foreground">Lokasyon Sayısı</p>
                           <p className="font-mono">{region.store_count}</p>
                         </div>
                         <div>
@@ -953,7 +953,7 @@ const AdvancedAnalyticsPage = () => {
             {/* Queue Summary */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <StatCard 
-                title="Toplam Mağaza" 
+                title="Toplam Lokasyon" 
                 value={queueAnalytics?.summary?.total_stores || 0}
                 icon={MapPin}
               />

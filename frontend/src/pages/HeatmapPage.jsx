@@ -107,7 +107,7 @@ const HeatmapPage = () => {
         setRegions(regionsRes.data);
         setCities(citiesRes.data);
 
-        // İlk mağazayı otomatik seç
+        // İlk lokasyonu otomatik seç
         if (storeList.length > 0) {
           setSelectedStore(storeList[0].store_id);
         }
@@ -1415,7 +1415,7 @@ const HeatmapPage = () => {
               <div className="bg-card border border-white/10 rounded-lg p-4">
                 <h3 className="font-semibold mb-3 flex items-center gap-2">
                   <MapPin className="w-4 h-4 text-primary" />
-                  Mağaza ve Kat Seçimi
+                  Lokasyon ve Kat Seçimi
                 </h3>
                 
                 {filteredStores.length > 0 ? (
@@ -1477,7 +1477,7 @@ const HeatmapPage = () => {
                 ) : (
                   <div className="text-center py-8 text-muted-foreground">
                     <Layers className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                    <p className="text-sm">Kat planı olan mağaza bulunamadı.</p>
+                    <p className="text-sm">Kat planı olan lokasyon bulunamadı.</p>
                     <p className="text-xs mt-1">Kat Planları sayfasından ekleyebilirsiniz.</p>
                   </div>
                 )}
@@ -2051,7 +2051,7 @@ const HeatmapPage = () => {
                   <ThermometerSun className="w-16 h-16 mx-auto mb-4 text-muted-foreground/30" />
                   <h3 className="font-semibold text-lg mb-2">Kat Seçin</h3>
                   <p className="text-muted-foreground">
-                    Sol panelden mağaza ve kat seçerek rapor oluşturabilirsiniz.
+                    Sol panelden lokasyon ve kat seçerek rapor oluşturabilirsiniz.
                   </p>
                 </div>
               )}

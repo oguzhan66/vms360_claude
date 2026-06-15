@@ -7,23 +7,87 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-async def fetch_vms_data(vms: dict, endpoint: str) -> Optional[str]:
-    """Fetch data from VMS server"""
+async def _try_session_login(base_url: str, username: str, password: str,
+                             client: httpx.AsyncClient) -> Optional[str]:
+    """Try Sagitech /rsapi/login to get a session ID."""
     try:
-        url = f"{vms['url']}{endpoint}"
-        auth = None
-        if vms.get('username'):
-            auth = (vms['username'], vms.get('password', ''))
-        
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(url, auth=auth if auth else None)
-            if response.status_code == 200:
-                return response.text
-            else:
-                logger.warning(f"VMS request failed: {response.status_code}")
-                return None
+        login_url = f"{base_url}/rsapi/login"
+        for params in [
+            {'username': username, 'password': password},
+            {'user': username, 'pass': password},
+        ]:
+            r = await client.get(login_url, params=params)
+            if r.status_code == 200:
+                try:
+                    root = ET.fromstring(r.text)
+                    sid = (root.findtext('SessionID') or root.findtext('sessionId')
+                           or root.findtext('Session') or root.findtext('Token'))
+                    if sid and sid.strip():
+                        return sid.strip()
+                except ET.ParseError:
+                    pass
+                # Cookie-based session
+                sid = r.cookies.get('sessionid') or r.cookies.get('session') or r.cookies.get('JSESSIONID')
+                if sid:
+                    return sid
+    except Exception:
+        pass
+    return None
+
+
+async def fetch_vms_data(vms: dict, endpoint: str, timeout: float = 10.0) -> Optional[str]:
+    """Fetch data from Sagitech VMS.
+    Tries in order: query-param auth → session login → HTTP Digest → HTTP Basic.
+    """
+    try:
+        base_url = vms['url'].rstrip('/')
+        url = f"{base_url}{endpoint}"
+        username = vms.get('username') or ''
+        password = vms.get('password') or ''
+
+        async with httpx.AsyncClient(timeout=timeout, verify=False,
+                                     follow_redirects=True) as client:
+
+            def _sep(u: str) -> str:
+                return '&' if '?' in u else '?'
+
+            # 0. No-auth (some VMS allow LAN access without credentials)
+            r = await client.get(url)
+            if r.status_code == 200:
+                logger.debug("VMS: no-auth OK")
+                return r.text
+
+            # 1. Query-param auth (Sagitech standard)
+            if username:
+                r = await client.get(f"{url}{_sep(url)}username={username}&password={password}")
+                if r.status_code == 200:
+                    return r.text
+                www_auth = r.headers.get('WWW-Authenticate', '')
+                logger.debug(f"Query-param auth → {r.status_code}  WWW-Auth: {www_auth}")
+
+            # 2. Session-based login
+            sid = await _try_session_login(base_url, username, password, client)
+            if sid:
+                r = await client.get(f"{url}{_sep(url)}sessionid={sid}")
+                if r.status_code == 200:
+                    return r.text
+
+            # 3. HTTP Digest Auth
+            if username:
+                r = await client.get(url, auth=httpx.DigestAuth(username, password))
+                if r.status_code == 200:
+                    return r.text
+
+            # 4. HTTP Basic Auth
+            r = await client.get(url, auth=(username, password) if username else None)
+            if r.status_code == 200:
+                return r.text
+
+            www_auth = r.headers.get('WWW-Authenticate', 'n/a')
+            logger.warning(f"VMS auth failed: {r.status_code} — WWW-Authenticate: {www_auth} — {url}")
+            return None
     except Exception as e:
-        logger.error(f"VMS fetch error: {str(e)}")
+        logger.error(f"VMS fetch error: {e}")
         return None
 
 

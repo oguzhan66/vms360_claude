@@ -1,9 +1,11 @@
 """Heatmap API routes"""
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import List, Optional
 from pydantic import BaseModel
 from datetime import datetime, timezone, timedelta
 from database import db
+from auth import require_auth
+from permissions import get_user_allowed_stores
 
 router = APIRouter(prefix="/heatmap", tags=["Heatmap"])
 
@@ -275,13 +277,20 @@ async def get_heatmap_range(
 
 
 @router.get("/stores-with-floors")
-async def get_stores_with_floors():
+async def get_stores_with_floors(user: dict = Depends(require_auth)):
     """
     Get list of stores that have floor plans configured.
     Used for filtering in the heatmap page.
     """
-    # Get all floors
-    floors = await db.floors.find({}, {"_id": 0}).to_list(500)
+    allowed_stores = await get_user_allowed_stores(user)
+
+    floor_query = {}
+    if allowed_stores is not None:
+        if not allowed_stores:
+            return []
+        floor_query["store_id"] = {"$in": list(allowed_stores)}
+
+    floors = await db.floors.find(floor_query, {"_id": 0}).to_list(500)
     
     # Group by store
     stores_dict = {}
@@ -520,7 +529,7 @@ async def export_heatmap_pdf(request: HeatmapRequest):
                 <img src="{logo_url}" class="logo" alt="VMS360">
                 <div>
                     <div class="brand">VMS360</div>
-                    <div class="brand-sub">Retail Panel</div>
+                    <div class="brand-sub">Stats & LPR</div>
                 </div>
             </div>
             <div class="report-info">
@@ -590,7 +599,7 @@ async def export_heatmap_pdf(request: HeatmapRequest):
         </div>
         
         <div class="footer">
-            VMS360 Retail Panel | {store.get('name', '')} | {store.get('location', '')} | Rapor ID: {request.floor_id[:8]}
+            VMS360 Stats & LPR | {store.get('name', '')} | {store.get('location', '')} | Rapor ID: {request.floor_id[:8]}
         </div>
     </body>
     </html>
@@ -625,6 +634,7 @@ async def get_time_density_matrix(
     data_type: str = Query("counter", description="counter | queue"),
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
+    user: dict = Depends(require_auth),
 ):
     """
     Mağaza × Saat yoğunluk matrisi.
@@ -639,9 +649,16 @@ async def get_time_density_matrix(
     col = "counter_snapshots" if data_type == "counter" else "queue_snapshots"
     value_field = "occupancy_percent" if data_type == "counter" else "total_queue_length"
 
+    allowed_stores = await get_user_allowed_stores(user)
     match = {"date": {"$gte": start, "$lte": end}}
     if store_id:
+        if allowed_stores is not None and store_id not in allowed_stores:
+            return {"stores": [], "hours": list(range(24))}
         match["store_id"] = store_id
+    elif allowed_stores is not None:
+        if not allowed_stores:
+            return {"stores": [], "hours": list(range(24))}
+        match["store_id"] = {"$in": list(allowed_stores)}
 
     pipeline = [
         {"$match": match},
@@ -700,6 +717,7 @@ async def get_gaussian_density(
     date_to: Optional[str] = Query(None),
     grid_cols: int = Query(20, description="Izgara sütun sayısı"),
     grid_rows: int = Query(15, description="Izgara satır sayısı"),
+    user: dict = Depends(require_auth),
 ):
     """
     Kamera pozisyonlarından Gaussian dağılım ile yoğunluk matrisi.
@@ -708,6 +726,10 @@ async def get_gaussian_density(
 
     Formül: density(x,y) = Σ_i [ value_i × exp(-((x-xi)²+(y-yi)²) / (2σ²)) ]
     """
+    allowed_stores = await get_user_allowed_stores(user)
+    if allowed_stores is not None and store_id not in allowed_stores:
+        return {"store_id": store_id, "grid": [], "cameras": []}
+
     now = datetime.now(timezone.utc)
     start = date_from or now.strftime("%Y-%m-%d")
     end = date_to or now.strftime("%Y-%m-%d")
@@ -726,7 +748,7 @@ async def get_gaussian_density(
 
     if not cameras:
         return {"grid": [], "grid_cols": grid_cols, "grid_rows": grid_rows,
-                "message": "Bu mağazada kamera bulunamadı"}
+                "message": "Bu lokasyonda kamera bulunamadı"}
 
     # Snapshot verisini al
     match = {"store_id": store_id, "date": {"$gte": start, "$lte": end}}

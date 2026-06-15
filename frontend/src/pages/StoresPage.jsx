@@ -14,7 +14,7 @@ import {
   DialogFooter,
   DialogClose
 } from '../components/ui/dialog';
-import { Store, Plus, Trash2, Edit, MapPin, Users, Server, Camera, Video } from 'lucide-react';
+import { Store, Plus, Trash2, Edit, MapPin, Users, Server, Camera, Video, FolderOpen, Pencil, Check, X } from 'lucide-react';
 import { toast } from 'sonner';
 import api from '../services/api';
 
@@ -30,6 +30,10 @@ const StoresPage = () => {
   const [editingStore, setEditingStore] = useState(null);
   const [vmsCameras, setVmsCameras] = useState([]);
   const [loadingCameras, setLoadingCameras] = useState(false);
+  const [filterGroup, setFilterGroup] = useState('');
+  const [newGroupInput, setNewGroupInput] = useState(false);
+  const [renamingGroup, setRenamingGroup] = useState(null);
+  const [renameValue, setRenameValue] = useState('');
   const [form, setForm] = useState({
     name: '',
     district_id: '',
@@ -38,7 +42,8 @@ const StoresPage = () => {
     queue_threshold: 5,
     counter_camera_ids: [],
     queue_camera_ids: [],
-    analytics_camera_ids: []
+    analytics_camera_ids: [],
+    group_name: ''
   });
   const [locationForm, setLocationForm] = useState({
     type: 'region',
@@ -123,14 +128,15 @@ const StoresPage = () => {
       
       if (editingStore) {
         await storeApi.update(editingStore.id, submitData);
-        toast.success('Magaza guncellendi');
+        toast.success('Lokasyon güncellendi');
       } else {
         await storeApi.create(submitData);
-        toast.success('Magaza eklendi');
+        toast.success('Lokasyon eklendi');
       }
       setDialogOpen(false);
       setEditingStore(null);
-      setForm({ name: '', district_id: '', vms_id: '', capacity: 100, queue_threshold: 5, counter_camera_ids: [], queue_camera_ids: [], analytics_camera_ids: [] });
+      setForm({ name: '', district_id: '', vms_id: '', capacity: 100, queue_threshold: 5, counter_camera_ids: [], queue_camera_ids: [], analytics_camera_ids: [], group_name: '' });
+      setNewGroupInput(false);
       setVmsCameras([]);
       loadData();
     } catch (e) {
@@ -161,6 +167,7 @@ const StoresPage = () => {
 
   const handleEdit = (store) => {
     setEditingStore(store);
+    setNewGroupInput(false);
     setForm({
       name: store.name,
       district_id: store.district_id,
@@ -169,7 +176,8 @@ const StoresPage = () => {
       queue_threshold: store.queue_threshold,
       counter_camera_ids: store.counter_camera_ids || [],
       queue_camera_ids: store.queue_camera_ids || [],
-      analytics_camera_ids: store.analytics_camera_ids || []
+      analytics_camera_ids: store.analytics_camera_ids || [],
+      group_name: store.group_name || ''
     });
     // Load cameras for the store's VMS
     if (store.vms_id) {
@@ -179,14 +187,40 @@ const StoresPage = () => {
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Bu magazayi silmek istediginize emin misiniz?')) return;
+    if (!window.confirm('Bu lokasyonu silmek istediğinize emin misiniz?')) return;
     try {
       await storeApi.delete(id);
-      toast.success('Magaza silindi');
+      toast.success('Lokasyon silindi');
       loadData();
     } catch (e) {
       console.error('Failed to delete store', e);
       toast.error('Silme basarisiz');
+    }
+  };
+
+  const handleRenameGroupConfirm = async (oldName) => {
+    const newName = renameValue.trim();
+    if (!newName || newName === oldName) { setRenamingGroup(null); return; }
+    try {
+      await storeApi.renameGroup(oldName, newName);
+      toast.success(`Grup "${oldName}" → "${newName}" olarak yeniden adlandırıldı`);
+      setRenamingGroup(null);
+      if (filterGroup === oldName) setFilterGroup(newName);
+      loadData();
+    } catch (e) {
+      toast.error('Yeniden adlandırma başarısız');
+    }
+  };
+
+  const handleDeleteGroup = async (groupName) => {
+    if (!window.confirm(`"${groupName}" grubunu silmek istiyor musunuz? Gruptaki öğeler grupsuz kalacak.`)) return;
+    try {
+      await storeApi.deleteGroup(groupName);
+      toast.success(`"${groupName}" grubu silindi`);
+      if (filterGroup === groupName) setFilterGroup('');
+      loadData();
+    } catch (e) {
+      toast.error('Grup silme başarısız');
     }
   };
 
@@ -207,9 +241,28 @@ const StoresPage = () => {
     return vms?.name || '-';
   };
 
+  const UNGROUPED = '__ungrouped__';
+
+  const existingGroups = [...new Set(stores.map(s => s.group_name).filter(Boolean))].sort();
+
+  const grouped = stores.reduce((acc, s) => {
+    const key = s.group_name || UNGROUPED;
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(s);
+    return acc;
+  }, {});
+
+  const groupKeys = Object.keys(grouped).sort((a, b) => {
+    if (a === UNGROUPED) return 1;
+    if (b === UNGROUPED) return -1;
+    return a.localeCompare(b);
+  });
+  const visibleKeys = filterGroup ? groupKeys.filter(k => k === filterGroup) : groupKeys;
+
   const openNewDialog = () => {
     setEditingStore(null);
-    setForm({ name: '', district_id: '', vms_id: '', capacity: 100, queue_threshold: 5 });
+    setNewGroupInput(false);
+    setForm({ name: '', district_id: '', vms_id: '', capacity: 100, queue_threshold: 5, counter_camera_ids: [], queue_camera_ids: [], analytics_camera_ids: [], group_name: '' });
     setDialogOpen(true);
   };
 
@@ -218,9 +271,9 @@ const StoresPage = () => {
       <div className="page-header">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-bold">Magaza Yonetimi</h1>
+            <h1 className="text-xl font-bold">Lokasyon Yönetimi</h1>
             <p className="text-sm text-muted-foreground mt-1">
-              Magazalari ve konumlari yonetin
+              Lokasyonları ve konumları yönetin
             </p>
           </div>
           <div className="flex gap-2">
@@ -316,20 +369,44 @@ const StoresPage = () => {
               <DialogTrigger asChild>
                 <Button onClick={openNewDialog} data-testid="add-store-btn">
                   <Plus className="w-4 h-4 mr-2" />
-                  Magaza Ekle
+                  Lokasyon Ekle
                 </Button>
               </DialogTrigger>
               <DialogContent className="bg-card border-white/10">
                 <DialogHeader>
-                  <DialogTitle>{editingStore ? 'Magaza Duzenle' : 'Yeni Magaza Ekle'}</DialogTitle>
+                  <DialogTitle>{editingStore ? 'Lokasyon Düzenle' : 'Yeni Lokasyon Ekle'}</DialogTitle>
                 </DialogHeader>
                 <form onSubmit={handleSubmit} className="space-y-4">
+                  {/* Grup alanı */}
                   <div>
-                    <Label>Magaza Adi</Label>
+                    <Label>Grup</Label>
+                    {!newGroupInput ? (
+                      <select
+                        value={form.group_name}
+                        onChange={e => {
+                          if (e.target.value === '__new__') { setNewGroupInput(true); setForm({ ...form, group_name: '' }); }
+                          else setForm({ ...form, group_name: e.target.value });
+                        }}
+                        className="w-full h-9 text-sm rounded border border-border bg-secondary/50 text-foreground px-2 focus:outline-none focus:ring-1 focus:ring-primary"
+                      >
+                        <option value="">— Grupsuz —</option>
+                        {existingGroups.map(g => <option key={g} value={g}>{g}</option>)}
+                        <option value="__new__">+ Yeni grup oluştur...</option>
+                      </select>
+                    ) : (
+                      <div className="flex gap-2">
+                        <Input autoFocus value={form.group_name} onChange={e => setForm({ ...form, group_name: e.target.value })}
+                          placeholder="Grup adı girin" className="flex-1 bg-secondary/50 border-border" />
+                        <Button type="button" variant="outline" size="sm" onClick={() => { setNewGroupInput(false); setForm({ ...form, group_name: '' }); }}>İptal</Button>
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    <Label>Lokasyon Adı</Label>
                     <Input
                       value={form.name}
                       onChange={(e) => setForm({ ...form, name: e.target.value })}
-                      placeholder="Magaza adi"
+                      placeholder="Lokasyon adı"
                       required
                       className="bg-secondary/50 border-white/10"
                       data-testid="store-name-input"
@@ -548,98 +625,127 @@ const StoresPage = () => {
       </div>
 
       <div className="page-content">
+        {/* Grup filtresi */}
+        {existingGroups.length > 0 && (
+          <div className="flex items-center gap-2 mb-5 flex-wrap">
+            <span className="text-xs text-muted-foreground font-medium">Grup Filtresi:</span>
+            <button onClick={() => setFilterGroup('')}
+              className={`text-xs px-3 py-1 rounded-full border transition-colors ${!filterGroup ? 'bg-primary text-primary-foreground border-primary' : 'border-border text-muted-foreground hover:border-primary/50'}`}>
+              Tümü ({stores.length})
+            </button>
+            {existingGroups.map(g => (
+              <button key={g} onClick={() => setFilterGroup(filterGroup === g ? '' : g)}
+                className={`text-xs px-3 py-1 rounded-full border transition-colors ${filterGroup === g ? 'bg-primary text-primary-foreground border-primary' : 'border-border text-muted-foreground hover:border-primary/50'}`}>
+                {g} ({grouped[g]?.length || 0})
+              </button>
+            ))}
+            {grouped[UNGROUPED] && (
+              <button onClick={() => setFilterGroup(filterGroup === UNGROUPED ? '' : UNGROUPED)}
+                className={`text-xs px-3 py-1 rounded-full border transition-colors ${filterGroup === UNGROUPED ? 'bg-primary text-primary-foreground border-primary' : 'border-border text-muted-foreground hover:border-primary/50'}`}>
+                Grupsuz ({grouped[UNGROUPED].length})
+              </button>
+            )}
+          </div>
+        )}
+
         {loading ? (
           <div className="space-y-4">
-            {[...Array(3)].map((_, i) => (
-              <div key={i} className="store-card loading-skeleton h-24" />
-            ))}
+            {[...Array(3)].map((_, i) => <div key={i} className="store-card loading-skeleton h-24" />)}
           </div>
         ) : stores.length > 0 ? (
-          <div className="space-y-4">
-            {stores.map((store) => {
-              const location = getDistrictInfo(store.district_id);
-              return (
-                <div 
-                  key={store.id} 
-                  className="store-card flex items-center justify-between"
-                  data-testid={`store-card-${store.id}`}
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 bg-primary/10 flex items-center justify-center">
-                      <Store className="w-6 h-6 text-primary" />
-                    </div>
-                    <div>
-                      <h3 className="font-semibold">{store.name}</h3>
-                      <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                        <MapPin className="w-3 h-3" />
-                        <span>{location.district}, {location.city}, {location.region}</span>
-                      </div>
-                      <div className="flex items-center gap-4 text-xs text-muted-foreground mt-1">
-                        <span className="flex items-center gap-1">
-                          <Users className="w-3 h-3" />
-                          Kapasite: {store.capacity}
-                        </span>
-                        <span className="flex items-center gap-1">
-                          <Server className="w-3 h-3" />
-                          VMS: {getVmsName(store.vms_id)}
-                        </span>
-                      </div>
-                      {/* Camera Indicators */}
-                      <div className="flex items-center gap-2 mt-2">
-                        {(store.counter_camera_id || store.counter_camera_ids?.length > 0) && (
-                          <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 bg-blue-500/10 text-blue-500 rounded">
-                            <Video className="w-3 h-3" />
-                            Sayaç {store.counter_camera_ids?.length > 1 ? `(${store.counter_camera_ids.length})` : ''}
-                          </span>
-                        )}
-                        {(store.queue_camera_id || store.queue_camera_ids?.length > 0) && (
-                          <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 bg-amber-500/10 text-amber-500 rounded">
-                            <Video className="w-3 h-3" />
-                            Kuyruk {store.queue_camera_ids?.length > 1 ? `(${store.queue_camera_ids.length})` : ''}
-                          </span>
-                        )}
-                        {(store.analytics_camera_id || store.analytics_camera_ids?.length > 0) && (
-                          <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 bg-purple-500/10 text-purple-500 rounded">
-                            <Video className="w-3 h-3" />
-                            Analitik {store.analytics_camera_ids?.length > 1 ? `(${store.analytics_camera_ids.length})` : ''}
-                          </span>
-                        )}
-                        {!store.counter_camera_id && !store.queue_camera_id && !store.analytics_camera_id && 
-                         (!store.counter_camera_ids || store.counter_camera_ids.length === 0) &&
-                         (!store.queue_camera_ids || store.queue_camera_ids.length === 0) &&
-                         (!store.analytics_camera_ids || store.analytics_camera_ids.length === 0) && (
-                          <span className="text-xs text-muted-foreground italic">Kamera atanmadı</span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button 
-                      variant="outline" 
-                      size="sm"
-                      onClick={() => handleEdit(store)}
-                      className="border-white/10"
-                    >
-                      <Edit className="w-4 h-4" />
-                    </Button>
-                    <Button 
-                      variant="outline" 
-                      size="sm"
-                      onClick={() => handleDelete(store.id)}
-                      className="border-white/10 text-red-400 hover:text-red-300"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                  </div>
+          <div className="space-y-6">
+            {visibleKeys.map(groupKey => (
+              <div key={groupKey}>
+                {/* Grup başlığı */}
+                <div className="flex items-center gap-2 mb-3">
+                  <FolderOpen className="w-4 h-4 text-primary/70" />
+                  {renamingGroup === groupKey ? (
+                    <>
+                      <input
+                        autoFocus
+                        value={renameValue}
+                        onChange={e => setRenameValue(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') handleRenameGroupConfirm(groupKey); if (e.key === 'Escape') setRenamingGroup(null); }}
+                        className="text-sm font-semibold bg-transparent border-b border-primary outline-none px-1 w-40"
+                      />
+                      <button onClick={() => handleRenameGroupConfirm(groupKey)} className="text-green-400 hover:text-green-300"><Check className="w-3.5 h-3.5" /></button>
+                      <button onClick={() => setRenamingGroup(null)} className="text-muted-foreground hover:text-foreground"><X className="w-3.5 h-3.5" /></button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-sm font-semibold text-foreground/80">
+                        {groupKey === UNGROUPED ? 'Grupsuz' : groupKey}
+                      </span>
+                      <span className="text-xs text-muted-foreground">({grouped[groupKey].length})</span>
+                      {groupKey !== UNGROUPED && (
+                        <>
+                          <button onClick={() => { setRenamingGroup(groupKey); setRenameValue(groupKey); }} className="text-muted-foreground hover:text-primary ml-1"><Pencil className="w-3 h-3" /></button>
+                          <button onClick={() => handleDeleteGroup(groupKey)} className="text-muted-foreground hover:text-red-400"><Trash2 className="w-3 h-3" /></button>
+                        </>
+                      )}
+                    </>
+                  )}
+                  <div className="flex-1 h-px bg-border ml-1" />
                 </div>
-              );
-            })}
+
+                <div className="space-y-3">
+                  {grouped[groupKey].map((store) => {
+                    const location = getDistrictInfo(store.district_id);
+                    return (
+                      <div key={store.id} className="store-card flex items-center justify-between" data-testid={`store-card-${store.id}`}>
+                        <div className="flex items-center gap-4">
+                          <div className="w-12 h-12 bg-primary/10 flex items-center justify-center">
+                            <Store className="w-6 h-6 text-primary" />
+                          </div>
+                          <div>
+                            <h3 className="font-semibold">{store.name}</h3>
+                            <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                              <MapPin className="w-3 h-3" />
+                              <span>{location.district}, {location.city}, {location.region}</span>
+                            </div>
+                            <div className="flex items-center gap-4 text-xs text-muted-foreground mt-1">
+                              <span className="flex items-center gap-1"><Users className="w-3 h-3" />Kapasite: {store.capacity}</span>
+                              <span className="flex items-center gap-1"><Server className="w-3 h-3" />VMS: {getVmsName(store.vms_id)}</span>
+                            </div>
+                            <div className="flex items-center gap-2 mt-2">
+                              {(store.counter_camera_id || store.counter_camera_ids?.length > 0) && (
+                                <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 bg-blue-500/10 text-blue-500 rounded">
+                                  <Video className="w-3 h-3" />Sayaç {store.counter_camera_ids?.length > 1 ? `(${store.counter_camera_ids.length})` : ''}
+                                </span>
+                              )}
+                              {(store.queue_camera_id || store.queue_camera_ids?.length > 0) && (
+                                <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 bg-amber-500/10 text-amber-500 rounded">
+                                  <Video className="w-3 h-3" />Kuyruk {store.queue_camera_ids?.length > 1 ? `(${store.queue_camera_ids.length})` : ''}
+                                </span>
+                              )}
+                              {(store.analytics_camera_id || store.analytics_camera_ids?.length > 0) && (
+                                <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 bg-purple-500/10 text-purple-500 rounded">
+                                  <Video className="w-3 h-3" />Analitik {store.analytics_camera_ids?.length > 1 ? `(${store.analytics_camera_ids.length})` : ''}
+                                </span>
+                              )}
+                              {!store.counter_camera_id && !store.queue_camera_id && !store.analytics_camera_id &&
+                               (!store.counter_camera_ids?.length) && (!store.queue_camera_ids?.length) && (!store.analytics_camera_ids?.length) && (
+                                <span className="text-xs text-muted-foreground italic">Kamera atanmadı</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button variant="outline" size="sm" onClick={() => handleEdit(store)} className="border-white/10"><Edit className="w-4 h-4" /></Button>
+                          <Button variant="outline" size="sm" onClick={() => handleDelete(store.id)} className="border-white/10 text-red-400 hover:text-red-300"><Trash2 className="w-4 h-4" /></Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
         ) : (
           <div className="text-center py-16 text-muted-foreground">
             <Store className="w-12 h-12 mx-auto mb-4 opacity-50" />
-            <p>Henuz magaza eklenmedi.</p>
-            <p className="text-sm mt-1">Once konum (Bolge &gt; Il &gt; Ilce) ekleyin, sonra magaza tanimlayabilirsiniz.</p>
+            <p>Henüz lokasyon eklenmedi.</p>
+            <p className="text-sm mt-1">Önce konum (Bölge > İl > İlçe) ekleyin, sonra lokasyon tanımlayabilirsiniz.</p>
           </div>
         )}
       </div>

@@ -183,10 +183,10 @@ export const FilterBar = ({
         <Select value={selectedStore} onValueChange={setSelectedStore}>
           <SelectTrigger className="w-48 bg-secondary/50 border-white/10" data-testid="filter-store">
             <Store className="w-4 h-4 mr-2" />
-            <SelectValue placeholder="Mağaza" />
+            <SelectValue placeholder="Lokasyon" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">Tüm Mağazalar</SelectItem>
+            <SelectItem value="all">Tüm Lokasyonlar</SelectItem>
             {stores.map((s) => (
               <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
             ))}

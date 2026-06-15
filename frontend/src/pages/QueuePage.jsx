@@ -54,13 +54,13 @@ const QueuePage = () => {
           <div>
             <h1 className="text-xl font-bold">Kuyruk Analizi</h1>
             <p className="text-sm text-muted-foreground mt-1">
-              Magaza kuyruk uzunluklari ve yogunluk takibi
+              Lokasyon kuyruk uzunluklari ve yogunluk takibi
             </p>
           </div>
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
               <Activity className="w-4 h-4 text-emerald-400" />
-              <span className="text-sm font-mono">{filteredData.length} magaza</span>
+              <span className="text-sm font-mono">{filteredData.length} lokasyon</span>
             </div>
           </div>
         </div>
@@ -84,7 +84,7 @@ const QueuePage = () => {
             variant="primary"
           />
           <StatCard 
-            label="Kritik Magaza" 
+            label="Kritik Lokasyon" 
             value={criticalStores} 
             icon={AlertTriangle}
             variant="danger"

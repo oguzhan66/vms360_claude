@@ -67,7 +67,7 @@ const MiniGrid = ({ grid, cols, rows, cameras = [] }) => {
   );
 };
 
-// Tek mağaza için mini kart (tüm mağazalar görünümünde)
+// Tek lokasyon için mini kart (tüm lokasyonlar görünümünde)
 const StoreGaussCard = ({ store, dataType, dateParams, onSelect }) => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -210,7 +210,7 @@ const DensityHeatmapPage = () => {
             <ThermometerSun className="w-6 h-6 text-orange-400" />
             <div>
               <h1 className="text-xl font-bold">Yoğunluk Analizi</h1>
-              <p className="text-sm text-muted-foreground">Mağaza ve saat bazlı trafik yoğunluğu</p>
+              <p className="text-sm text-muted-foreground">Lokasyon ve saat bazlı trafik yoğunluğu</p>
             </div>
           </div>
         </div>
@@ -221,7 +221,7 @@ const DensityHeatmapPage = () => {
         <div className="flex flex-wrap gap-3 items-center">
           <select value={selectedStore} onChange={e => setSelectedStore(e.target.value)}
             className="bg-secondary/30 border border-border rounded px-3 py-2 text-sm">
-            <option value="all">Tüm Mağazalar</option>
+            <option value="all">Tüm Lokasyonlar</option>
             {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
 
@@ -269,13 +269,13 @@ const DensityHeatmapPage = () => {
                 <SummaryCard icon={Activity}
                   label={dataType === 'counter' ? 'Ort. Doluluk Skoru' : 'Ort. Kuyruk Skoru'}
                   value={globalTotal.toFixed(1)}
-                  sub={`${matrixData.stores.length} mağaza, ${dateRange === '1d' ? 'bugün' : dateRange === '7d' ? '7 günlük' : '30 günlük'} ort.`}
+                  sub={`${matrixData.stores.length} lokasyon, ${dateRange === '1d' ? 'bugün' : dateRange === '7d' ? '7 günlük' : '30 günlük'} ort.`}
                   color="text-primary" />
                 <SummaryCard icon={Clock} label="En Yoğun Saat" value={peakHourEntry.hour}
                   sub={`${peakHourEntry.total.toFixed(1)} ort. ${dataType === 'counter' ? 'doluluk %' : 'kuyruk'}`} color="text-orange-400" />
                 <SummaryCard icon={TrendingUp} label="En Sakin Saat" value={quietHourEntry.hour === '-' ? '-' : quietHourEntry.hour}
                   sub="En düşük trafik saati" color="text-blue-400" />
-                <SummaryCard icon={Store} label="En Yoğun Mağaza" value={busiestStore?.name || '-'}
+                <SummaryCard icon={Store} label="En Yoğun Lokasyon" value={busiestStore?.name || '-'}
                   sub={busiestStore?.total ? `${busiestStore.total.toFixed(1)} doluluk skoru` : ''} color="text-emerald-400" />
               </div>
             )}
@@ -284,7 +284,7 @@ const DensityHeatmapPage = () => {
               <div className="bg-card/50 border border-border rounded-lg p-4">
                 <div className="text-sm font-medium mb-1">Saatlik Trafik Dağılımı</div>
                 <p className="text-xs text-muted-foreground mb-4">
-                  Tüm mağazaların saate göre toplam ziyaretçi dağılımı.
+                  Tüm lokasyonların saate göre toplam ziyaretçi dağılımı.
                 </p>
                 <div className="h-44">
                   <ResponsiveContainer width="100%" height="100%">
@@ -314,10 +314,10 @@ const DensityHeatmapPage = () => {
             <div className="bg-card/50 border border-border rounded-lg p-4">
               <div className="flex items-center justify-between mb-1">
                 <div>
-                  <div className="text-sm font-medium">Mağaza × Saat Yoğunluk Matrisi</div>
+                  <div className="text-sm font-medium">Lokasyon × Saat Yoğunluk Matrisi</div>
                   <div className="text-xs text-muted-foreground mt-0.5">
                     Her hücre = o saatteki <span className="text-foreground font-medium">ortalama {matrixData?.value_label || 'kişi'} sayısı</span>.
-                    {' '}<span className="text-amber-400 font-semibold">Peak</span> = mağazanın en yoğun saati.
+                    {' '}<span className="text-amber-400 font-semibold">Peak</span> = lokasyonun en yoğun saati.
                     {' '}<span className="text-blue-400 font-semibold">Genel Top.</span> = tüm saatlerin toplamı.
                   </div>
                 </div>
@@ -339,7 +339,7 @@ const DensityHeatmapPage = () => {
                   <table className="w-full text-xs border-collapse" style={{ minWidth: '900px' }}>
                     <thead className="sticky top-0 z-10 bg-card">
                       <tr>
-                        <th className="text-left pr-4 py-2 text-muted-foreground font-normal whitespace-nowrap" style={{ width: '140px' }}>Mağaza</th>
+                        <th className="text-left pr-4 py-2 text-muted-foreground font-normal whitespace-nowrap" style={{ width: '140px' }}>Lokasyon</th>
                         {hours.map(h => (
                           <th key={h}
                             className={`text-center py-2 text-muted-foreground font-normal transition-colors ${hoveredHour === h ? 'text-foreground bg-white/5' : ''}`}
@@ -396,7 +396,7 @@ const DensityHeatmapPage = () => {
                           const rounded = Math.round(h.total);
                           return (
                             <td key={idx}
-                              title={`Saat ${hours[idx]}:00 — Tüm mağazalar toplam ort. ${rounded} ${matrixData?.value_label || 'kişi'}`}
+                              title={`Saat ${hours[idx]}:00 — Tüm lokasyonlar toplam ort. ${rounded} ${matrixData?.value_label || 'kişi'}`}
                               className={`text-center text-xs font-mono font-bold py-2 ${h.hour === peakHourEntry.hour ? 'text-amber-400' : 'text-foreground'}`}
                               onMouseEnter={() => setHoveredHour(hours[idx])}
                               onMouseLeave={() => setHoveredHour(null)}>
@@ -420,10 +420,10 @@ const DensityHeatmapPage = () => {
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-sm font-medium">Mağaza Alan Yoğunluğu</div>
+                <div className="text-sm font-medium">Lokasyon Alan Yoğunluğu</div>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  Her mağazanın kamera dağılımına göre hesaplanan alan yoğunluk haritası.
-                  Detaylar için mağaza kartına tıklayın.
+                  Her lokasyonun kamera dağılımına göre hesaplanan alan yoğunluk haritası.
+                  Detaylar için lokasyon kartına tıklayın.
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -438,7 +438,7 @@ const DensityHeatmapPage = () => {
             </div>
 
             {stores.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground">Mağaza bulunamadı</div>
+              <div className="text-center py-12 text-muted-foreground">Lokasyon bulunamadı</div>
             ) : (
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
                 {stores.map(store => (
@@ -463,7 +463,7 @@ const DensityHeatmapPage = () => {
             ) : gaussData.grid.length === 0 ? (
               <div className="bg-card/50 border border-border rounded-lg p-8 text-center text-muted-foreground">
                 <Camera className="w-10 h-10 mx-auto mb-3 opacity-40" />
-                <div className="text-sm font-medium mb-1">{gaussData.message || 'Bu mağaza için veri yok'}</div>
+                <div className="text-sm font-medium mb-1">{gaussData.message || 'Bu lokasyon için veri yok'}</div>
                 <div className="text-xs">Kameraları kat planına yerleştirin ya da farklı bir tarih aralığı seçin.</div>
               </div>
             ) : (

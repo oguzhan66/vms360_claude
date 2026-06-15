@@ -1,8 +1,8 @@
 """
-VMS360 Retail Panel - Backend Server
+VMS360 Stats & LPR - Backend Server
 Modular architecture with FastAPI routers
 """
-from fastapi import FastAPI, APIRouter, HTTPException, Query, BackgroundTasks, Depends, Request
+from fastapi import FastAPI, APIRouter, HTTPException, Query, BackgroundTasks, Depends, Request, Body
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
@@ -26,7 +26,6 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email.mime.text import MIMEText
 from email import encoders
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
@@ -103,6 +102,9 @@ from routers.local_data import router as local_data_router
 from routers.floors import router as floors_router
 from routers.heatmap import router as heatmap_router
 from routers.alerts import router as alerts_router
+from routers.tenants import router as tenants_router
+from routers.vms_events import router as vms_events_router
+from routers.event_store import router as event_store_router, collect_vms_events, create_event_store_indexes
 
 # Include routers - LOCAL DATA ROUTER FIRST (takes precedence for live/reports endpoints)
 # All data now comes from local MongoDB warehouse, not live VMS
@@ -110,6 +112,7 @@ api_router.include_router(local_data_router)  # MUST BE FIRST - overrides live/r
 api_router.include_router(analytics_router)
 api_router.include_router(auth_router)
 api_router.include_router(users_router)
+api_router.include_router(tenants_router)
 api_router.include_router(locations_router)
 api_router.include_router(stores_router)
 api_router.include_router(cameras_router)
@@ -120,6 +123,9 @@ api_router.include_router(historical_router)
 api_router.include_router(floors_router)
 api_router.include_router(heatmap_router)
 api_router.include_router(alerts_router)
+api_router.include_router(vms_router)
+api_router.include_router(vms_events_router)
+api_router.include_router(event_store_router)
 # Note: VMS is now only used by data_collector.py for background data collection
 
 # Configure logging
@@ -569,7 +575,7 @@ async def init_default_users():
             username="admin",
             password_hash=get_password_hash("12345"),
             full_name="Sistem Yöneticisi",
-            role="admin"
+            role="super_admin"
         )
         doc = admin.model_dump()
         doc['created_at'] = doc['created_at'].isoformat()
@@ -604,104 +610,124 @@ async def init_redis_cache():
 
 
 # ============== SCHEDULER FOR DATA COLLECTION & REPORTS ==============
-scheduler = AsyncIOScheduler()
+from scheduler_state import scheduler, reschedule_collection_jobs
 
 async def init_scheduler():
     """Initialize the scheduler and add jobs for data collection and scheduled reports"""
     from data_collector import (
-        collect_all_snapshots, 
-        create_hourly_aggregates, 
+        collect_all_snapshots,
+        create_hourly_aggregates,
         create_daily_summary,
         cleanup_old_snapshots,
-        check_store_health
+        check_store_health,
+        collect_daily_vms_report,
+        collect_analytics_snapshot,
     )
     from database import create_indexes
-    
+    from models import Settings
+
     # Create database indexes (P0: MongoDB Index)
     await create_indexes()
-    
-    # Job 1: Collect snapshots every 5 minutes
+    await create_event_store_indexes()
+
+    # Read persisted settings to initialize jobs with correct intervals
+    raw = await db.settings.find_one({"id": "global_settings"}, {"_id": 0})
+    cfg = Settings(**(raw or {}))
+    pc_interval = cfg.person_count_interval   # 1-60 dk
+    an_interval = cfg.analytics_interval      # 5-60 dk
+    retention   = cfg.data_retention_days     # gün
+
+    # Job 1: Kişi sayma + kuyruk snapshot
     scheduler.add_job(
         collect_all_snapshots,
-        CronTrigger(minute='*/5'),  # Run every 5 minutes
-        id='collect_snapshots',
-        replace_existing=True
-    )
-    
-    # Job 2: Create hourly aggregates at the end of each hour
-    scheduler.add_job(
-        create_hourly_aggregates,
-        CronTrigger(minute='55'),  # Run at :55 of every hour
-        id='create_hourly_aggregates',
-        replace_existing=True
-    )
-    
-    # Job 3: Create daily summary at end of day (23:59)
-    scheduler.add_job(
-        create_daily_summary,
-        CronTrigger(hour='23', minute='59'),
-        id='create_daily_summary',
-        replace_existing=True
-    )
-    
-    # Job 4: Cleanup old snapshots weekly (keep 7 days of snapshots)
-    scheduler.add_job(
-        cleanup_old_snapshots,
-        CronTrigger(day_of_week='sun', hour='3', minute='0'),  # Sunday 3:00 AM
-        id='cleanup_old_snapshots',
-        replace_existing=True
-    )
-    
-    # Job 5: Check scheduled reports every minute
-    scheduler.add_job(
-        check_scheduled_reports,
-        CronTrigger(minute='*'),
-        id='check_scheduled_reports',
-        replace_existing=True
-    )
-    
-    # Job 6: Legacy hourly data collection (for compatibility)
-    scheduler.add_job(
-        collect_historical_data,
-        CronTrigger(minute='0'),
-        id='collect_historical_data',
-        replace_existing=True
-    )
-    
-    # Job 7: P0 - Check store health every 10 minutes (veri gelmeme alarmı)
-    scheduler.add_job(
-        check_store_health,
-        CronTrigger(minute='*/10'),  # Run every 10 minutes
-        id='check_store_health',
-        replace_existing=True
-    )
-    # Job 8: Daily VMS report collection at 02:00
-    from data_collector import collect_daily_vms_report
-    scheduler.add_job(
-        collect_daily_vms_report,
-        CronTrigger(hour='2', minute='0'),
-        id='collect_daily_vms_report',
-        replace_existing=True
+        CronTrigger(minute=f"*/{pc_interval}"),
+        id="collect_snapshots",
+        replace_existing=True,
     )
 
-    # Job 9: Analytics (age/gender) snapshots every 15 minutes via analytics/report API
-    from data_collector import collect_analytics_snapshot
+    # Job 2: Saatlik agregat (:55)
+    scheduler.add_job(
+        create_hourly_aggregates,
+        CronTrigger(minute="55"),
+        id="create_hourly_aggregates",
+        replace_existing=True,
+    )
+
+    # Job 3: Günlük özet (23:59)
+    scheduler.add_job(
+        create_daily_summary,
+        CronTrigger(hour="23", minute="59"),
+        id="create_daily_summary",
+        replace_existing=True,
+    )
+
+    # Job 4: Eski snapshot temizliği — data_retention_days kadar tutar
+    scheduler.add_job(
+        cleanup_old_snapshots,
+        CronTrigger(day_of_week="sun", hour="3", minute="0"),
+        id="cleanup_old_snapshots",
+        replace_existing=True,
+        kwargs={"days_to_keep": retention},
+    )
+
+    # Job 5: Zamanlanmış rapor kontrolü (her dakika)
+    scheduler.add_job(
+        check_scheduled_reports,
+        CronTrigger(minute="*"),
+        id="check_scheduled_reports",
+        replace_existing=True,
+    )
+
+    # Job 6: Saatlik geçmiş veri (geriye dönük uyumluluk)
+    scheduler.add_job(
+        collect_historical_data,
+        CronTrigger(minute="0"),
+        id="collect_historical_data",
+        replace_existing=True,
+    )
+
+    # Job 7: Mağaza sağlık kontrolü (her 10 dakika)
+    scheduler.add_job(
+        check_store_health,
+        CronTrigger(minute="*/10"),
+        id="check_store_health",
+        replace_existing=True,
+    )
+
+    # Job 8: Günlük VMS raporu (02:00)
+    scheduler.add_job(
+        collect_daily_vms_report,
+        CronTrigger(hour="2", minute="0"),
+        id="collect_daily_vms_report",
+        replace_existing=True,
+    )
+
+    # Job 9: Yaş/cinsiyet analytics snapshot
     scheduler.add_job(
         collect_analytics_snapshot,
-        CronTrigger(minute='*/15'),
-        id='collect_analytics_snapshots',
-        replace_existing=True
+        CronTrigger(minute=f"*/{an_interval}"),
+        id="collect_analytics_snapshots",
+        replace_existing=True,
+    )
+
+    # Job 10: VMS event store — her 30 dk'da bir alarm/LPR eventlerini topla
+    scheduler.add_job(
+        collect_vms_events,
+        CronTrigger(minute="0,30"),
+        id="collect_vms_events",
+        replace_existing=True,
     )
 
     scheduler.start()
     logger.info("Scheduler started:")
-    logger.info("  - Counter + Queue snapshots: every 5 minutes")
-    logger.info("  - Analytics (age/gender) snapshots: every 15 minutes")
+    logger.info("  - Counter + Queue snapshots: every %d minutes", pc_interval)
+    logger.info("  - Analytics (age/gender) snapshots: every %d minutes", an_interval)
     logger.info("  - Hourly aggregates: every hour at :55")
     logger.info("  - Daily summaries: every day at 23:59")
-    logger.info("  - Snapshot cleanup: Sundays at 03:00")
+    logger.info("  - Snapshot cleanup: Sundays at 03:00 (keep %d days)", retention)
     logger.info("  - Scheduled reports: every minute")
     logger.info("  - Store health check: every 10 minutes")
+    logger.info("  - VMS event store collection: every 30 minutes")
 
 async def collect_historical_data():
     """Collect and store historical data from VMS"""
@@ -1033,7 +1059,7 @@ async def test_scheduled_excel_generation(report_type: str = "analytics"):
                 worksheet.set_column(col, col, 18)
             
             for row, item in enumerate(data, 1):
-                is_total = item.get("Mağaza") == "TOPLAM"
+                is_total = item.get("Lokasyon") == "TOPLAM"
                 for col, key in enumerate(headers):
                     value = item.get(key, "")
                     if is_total:
@@ -1437,7 +1463,7 @@ async def debug_test_report_generation(
         "data_count": len(report_data.get("data", [])),
         "report_type_label": report_data.get("type"),
         "sample_data": report_data.get("data", [])[:5],  # First 5 rows
-        "total_in_sum": sum(item.get("Giriş", 0) for item in report_data.get("data", []) if item.get("Mağaza") != "TOPLAM") if report_type == "counter" else None
+        "total_in_sum": sum(item.get("Giriş", 0) for item in report_data.get("data", []) if item.get("Lokasyon") != "TOPLAM") if report_type == "counter" else None
     }
 
 
@@ -1741,32 +1767,28 @@ async def test_alert_email(user: dict = Depends(require_admin)):
     return {"message": "Test email gönderildi"}
 
 
-@api_router.post("/vms", response_model=VMSServer)
+@api_router.post("/vms")
 async def create_vms(input: VMSServerCreate):
     vms_obj = VMSServer(**input.model_dump())
     doc = vms_obj.model_dump()
     doc['created_at'] = doc['created_at'].isoformat()
     await db.vms_servers.insert_one(doc)
-    return vms_obj
+    doc.pop('_id', None)
+    return doc
 
-@api_router.get("/vms", response_model=List[VMSServer])
+@api_router.get("/vms")
 async def get_vms_list():
     servers = await db.vms_servers.find({}, {"_id": 0}).to_list(100)
-    for s in servers:
-        if isinstance(s.get('created_at'), str):
-            s['created_at'] = datetime.fromisoformat(s['created_at'])
     return servers
 
-@api_router.get("/vms/{vms_id}", response_model=VMSServer)
+@api_router.get("/vms/{vms_id}")
 async def get_vms(vms_id: str):
     server = await db.vms_servers.find_one({"id": vms_id}, {"_id": 0})
     if not server:
         raise HTTPException(status_code=404, detail="VMS not found")
-    if isinstance(server.get('created_at'), str):
-        server['created_at'] = datetime.fromisoformat(server['created_at'])
     return server
 
-@api_router.put("/vms/{vms_id}", response_model=VMSServer)
+@api_router.put("/vms/{vms_id}")
 async def update_vms(vms_id: str, input: VMSServerUpdate):
     update_data = {k: v for k, v in input.model_dump().items() if v is not None}
     if not update_data:
@@ -1782,6 +1804,19 @@ async def delete_vms(vms_id: str):
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="VMS not found")
     return {"status": "deleted"}
+
+@api_router.put("/vms/groups/{old_name}")
+async def rename_vms_group(old_name: str, data: dict = Body(...), user: dict = Depends(require_auth)):
+    new_name = data.get("new_name", "").strip()
+    if not new_name:
+        raise HTTPException(status_code=400, detail="new_name required")
+    result = await db.vms_servers.update_many({"group_name": old_name}, {"$set": {"group_name": new_name}})
+    return {"updated": result.modified_count}
+
+@api_router.delete("/vms/groups/{old_name}")
+async def delete_vms_group(old_name: str, user: dict = Depends(require_auth)):
+    result = await db.vms_servers.update_many({"group_name": old_name}, {"$unset": {"group_name": ""}})
+    return {"updated": result.modified_count}
 
 @api_router.get("/vms/{vms_id}/test")
 async def test_vms_connection(vms_id: str):
@@ -1975,7 +2010,7 @@ async def sync_vms_cameras(vms_id: str, store_id: Optional[str] = None):
         stores = await db.stores.find({"vms_id": vms_id}, {"_id": 0}).to_list(100)
     
     if not stores:
-        return {"status": "warning", "message": "Bu VMS'e bağlı mağaza bulunamadı", "imported": 0}
+        return {"status": "warning", "message": "Bu VMS'e bağlı lokasyon bulunamadı", "imported": 0}
     
     total_imported = 0
     total_skipped = 0
@@ -2250,12 +2285,24 @@ async def _fetch_live_counter_data(store_ids: Optional[str] = None, allowed_stor
             return []
         store_query["id"] = {"$in": list(allowed_stores)}
     
-    stores = await db.stores.find(store_query, {"_id": 0}).to_list(100)
-    vms_servers = await db.vms_servers.find({"is_active": True}, {"_id": 0}).to_list(100)
+    # Load stores, VMS servers, and all location data in parallel
+    stores_coro = db.stores.find(store_query, {"_id": 0}).to_list(100)
+    vms_coro = db.vms_servers.find({"is_active": True}, {"_id": 0}).to_list(100)
+    districts_coro = db.districts.find({}, {"_id": 0}).to_list(500)
+    cities_coro = db.cities.find({}, {"_id": 0}).to_list(500)
+    regions_coro = db.regions.find({}, {"_id": 0}).to_list(200)
+
+    stores, vms_servers, districts_list, cities_list, regions_list = await asyncio.gather(
+        stores_coro, vms_coro, districts_coro, cities_coro, regions_coro
+    )
+
+    districts_map = {d["id"]: d for d in districts_list}
+    cities_map = {c["id"]: c for c in cities_list}
+    regions_map = {r["id"]: r for r in regions_list}
     vms_dict = {v["id"]: v for v in vms_servers}
-    
+
     vms_data = {}
-    for vms_id, vms in vms_dict.items():
+    for vms in vms_dict.values():
         xml_data = await fetch_vms_data(vms, "/rsapi/modules/counter/getstats")
         if xml_data:
             parsed = parse_counter_xml(xml_data)
@@ -2268,16 +2315,16 @@ async def _fetch_live_counter_data(store_ids: Optional[str] = None, allowed_stor
                     "out_count": out_count,
                     "last_reset": p.get("last_reset", "")
                 }
-    
+
     for store in stores:
         counter_camera_ids = store.get("counter_camera_ids", [])
         if store.get("counter_camera_id") and store["counter_camera_id"] not in counter_camera_ids:
             counter_camera_ids.append(store["counter_camera_id"])
-        
+
         total_in = 0
         total_out = 0
         camera_details = []
-        
+
         for cam_id in counter_camera_ids:
             cam_data = vms_data.get(cam_id)
             if cam_data:
@@ -2288,27 +2335,23 @@ async def _fetch_live_counter_data(store_ids: Optional[str] = None, allowed_stor
                     "in_count": cam_data.get("in_count", 0),
                     "out_count": cam_data.get("out_count", 0)
                 })
-        
+
         current_visitors = max(0, total_in - total_out)
         occupancy_percent = (current_visitors / store["capacity"] * 100) if store["capacity"] > 0 else 0
-        
-        district = await db.districts.find_one({"id": store.get("district_id")}, {"_id": 0})
-        city = None
-        region = None
-        if district:
-            city = await db.cities.find_one({"id": district.get("city_id")}, {"_id": 0})
-            if city:
-                region = await db.regions.find_one({"id": city.get("region_id")}, {"_id": 0})
-        
+
+        district = districts_map.get(store.get("district_id", ""), {})
+        city = cities_map.get(district.get("city_id", ""), {})
+        region = regions_map.get(city.get("region_id", ""), {})
+
         result.append({
             "store_id": store["id"],
             "store_name": store["name"],
             "district_id": store.get("district_id"),
-            "district_name": district["name"] if district else "",
-            "city_id": city["id"] if city else "",
-            "city_name": city["name"] if city else "",
-            "region_id": region["id"] if region else "",
-            "region_name": region["name"] if region else "",
+            "district_name": district.get("name", ""),
+            "city_id": city.get("id", ""),
+            "city_name": city.get("name", ""),
+            "region_id": region.get("id", ""),
+            "region_name": region.get("name", ""),
             "total_in": total_in,
             "total_out": total_out,
             "current_visitors": current_visitors,
@@ -2317,7 +2360,7 @@ async def _fetch_live_counter_data(store_ids: Optional[str] = None, allowed_stor
             "status": "critical" if occupancy_percent >= 95 else "warning" if occupancy_percent >= 80 else "normal",
             "camera_details": camera_details
         })
-    
+
     return result
 
 
@@ -2336,26 +2379,24 @@ async def _fetch_live_queue_data(store_ids: Optional[str] = None, allowed_stores
             return []
         store_query["id"] = {"$in": list(allowed_stores)}
     
-    stores = await db.stores.find(store_query, {"_id": 0}).to_list(100)
-    vms_servers = await db.vms_servers.find({"is_active": True}, {"_id": 0}).to_list(100)
+    stores_list, vms_servers, cameras_db = await asyncio.gather(
+        db.stores.find(store_query, {"_id": 0}).to_list(100),
+        db.vms_servers.find({"is_active": True}, {"_id": 0}).to_list(100),
+        db.cameras.find({}, {"_id": 0, "camera_vms_id": 1, "name": 1}).to_list(500),
+    )
+    stores = stores_list
     vms_dict = {v["id"]: v for v in vms_servers}
-    
+    # Use camera names from DB (already synced) — avoids an extra VMS /cameras call per request
+    camera_names = {c["camera_vms_id"]: c["name"] for c in cameras_db if c.get("camera_vms_id") and c.get("name")}
+
     vms_data = {}
-    for vms_id, vms in vms_dict.items():
+    for vms in vms_dict.values():
         xml_data = await fetch_vms_data(vms, "/rsapi/modules/queue/getstats")
         if xml_data:
             parsed = parse_queue_xml(xml_data)
             for p in parsed.get('cameras', []):
                 vms_data[p["camera_id"]] = p
-    
-    camera_names = {}
-    for vms_id, vms in vms_dict.items():
-        camera_list_xml = await fetch_vms_data(vms, "/rsapi/cameras")
-        if camera_list_xml:
-            parsed_list = parse_camera_list_xml(camera_list_xml)
-            for cam in parsed_list.get('cameras', []):
-                camera_names[cam['camera_id']] = cam['name']
-    
+
     for store in stores:
         queue_camera_ids = store.get("queue_camera_ids", [])
         if store.get("queue_camera_id") and store["queue_camera_id"] not in queue_camera_ids:
@@ -3708,7 +3749,7 @@ async def export_report(
             
             # Detail sheet
             detail_sheet = workbook.add_worksheet("Mağaza Detayları")
-            headers = ["Mağaza", "Bölge", "İl", "İlçe", "Giriş", "Çıkış", "Mevcut", "Kapasite", "Doluluk %", "Durum"]
+            headers = ["Lokasyon", "Bölge", "İl", "İlçe", "Giriş", "Çıkış", "Mevcut", "Kapasite", "Doluluk %", "Durum"]
             for col, header in enumerate(headers):
                 detail_sheet.write(0, col, header, header_format)
             
@@ -3760,7 +3801,7 @@ async def export_report(
             summary_sheet.write(5, 1, summary.get("total_threshold_exceeds", 0), number_format)
             
             detail_sheet = workbook.add_worksheet("Mağaza Detayları")
-            headers = ["Mağaza", "Bölge", "İl", "İlçe", "Ort. Kuyruk", "Maks. Kuyruk", "Eşik Aşım", "Ölçüm", "Eşik", "Durum"]
+            headers = ["Lokasyon", "Bölge", "İl", "İlçe", "Ort. Kuyruk", "Maks. Kuyruk", "Eşik Aşım", "Ölçüm", "Eşik", "Durum"]
             for col, header in enumerate(headers):
                 detail_sheet.write(0, col, header, header_format)
             
@@ -3818,7 +3859,7 @@ async def export_report(
             
             # Store details sheet
             detail_sheet = workbook.add_worksheet("Mağaza Detayları")
-            headers = ["Mağaza", "Bölge", "İl", "İlçe", "Tespit", "Erkek", "Kadın", "Erkek %", "Kadın %"]
+            headers = ["Lokasyon", "Bölge", "İl", "İlçe", "Tespit", "Erkek", "Kadın", "Erkek %", "Kadın %"]
             for col, header in enumerate(headers):
                 detail_sheet.write(0, col, header, header_format)
             
@@ -4304,7 +4345,7 @@ async def export_report_pdf(
             
             # Store details
             elements.append(Paragraph("Mağaza Detayları", header_style))
-            store_data = [["Mağaza", "Konum", "Anlık", "Giriş", "Çıkış", "Doluluk", "Durum"]]
+            store_data = [["Lokasyon", "Konum", "Anlık", "Giriş", "Çıkış", "Doluluk", "Durum"]]
             for store in counter_data[:20]:  # Limit to 20 stores
                 status_tr = {"normal": "Normal", "warning": "Uyarı", "critical": "Kritik"}.get(store["status"], store["status"])
                 store_data.append([
@@ -4364,7 +4405,7 @@ async def export_report_pdf(
             elements.append(Spacer(1, 0.5*cm))
             
             elements.append(Paragraph("Mağaza Kuyruk Durumu", header_style))
-            queue_table_data = [["Mağaza", "Ort. Kuyruk", "Maks. Kuyruk", "Eşik Aşım", "Eşik", "Durum"]]
+            queue_table_data = [["Lokasyon", "Ort. Kuyruk", "Maks. Kuyruk", "Eşik Aşım", "Eşik", "Durum"]]
             for store in queue_data[:20]:
                 status_tr = {"normal": "Normal", "warning": "Uyarı", "critical": "Kritik"}.get(store.get("status", ""), store.get("status", ""))
                 queue_table_data.append([
@@ -4447,7 +4488,7 @@ async def export_report_pdf(
             elements.append(Paragraph(f"Ortalama Ziyaretçi: {round(avg_visitors, 1)}", subtitle_style))
             elements.append(Spacer(1, 0.3*cm))
             
-            comp_data = [["Sıra", "Mağaza", "Ziyaretçi", "Giriş", "Doluluk", "Performans"]]
+            comp_data = [["Sıra", "Lokasyon", "Ziyaretçi", "Giriş", "Doluluk", "Performans"]]
             for idx, store in enumerate(sorted_stores[:15], 1):
                 deviation = round(((store["current_visitors"] - avg_visitors) / avg_visitors * 100) if avg_visitors > 0 else 0, 1)
                 perf = f"+{deviation}%" if deviation >= 0 else f"{deviation}%"
@@ -4476,7 +4517,7 @@ async def export_report_pdf(
     # Footer
     elements.append(Spacer(1, 1*cm))
     footer_style = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=8, textColor=colors.grey, alignment=TA_CENTER, fontName=PDF_FONT)
-    elements.append(Paragraph("Bu rapor VMS360 Retail Panel tarafından otomatik olarak oluşturulmuştur.", footer_style))
+    elements.append(Paragraph("Bu rapor VMS360 Stats & LPR tarafından otomatik olarak oluşturulmuştur.", footer_style))
     
     # Build PDF
     doc.build(elements)
@@ -4549,11 +4590,11 @@ async def test_smtp_settings(request: SMTPTestRequest, admin: dict = Depends(req
         body = """
         <html>
         <body style="font-family: Arial, sans-serif; padding: 20px;">
-            <h2 style="color: #3B82F6;">VMS360 Retail Panel</h2>
+            <h2 style="color: #3B82F6;">VMS360 Stats & LPR</h2>
             <p>Bu bir test mesajıdır. SMTP ayarlarınız başarıyla yapılandırıldı!</p>
             <hr style="border: 1px solid #E5E7EB; margin: 20px 0;">
             <p style="color: #6B7280; font-size: 12px;">
-                Bu mesaj VMS360 Retail Panel tarafından gönderilmiştir.
+                Bu mesaj VMS360 Stats & LPR tarafından gönderilmiştir.
             </p>
         </body>
         </html>
@@ -4721,7 +4762,7 @@ async def generate_report_data(report_type: str, filters: dict = None):
         data = []
         for s in report.get("stores", []):
             data.append({
-                "Mağaza": s.get("store_name", ""),
+                "Lokasyon": s.get("store_name", ""),
                 "Bölge": s.get("region_name", ""),
                 "İl": s.get("city_name", ""),
                 "İlçe": s.get("district_name", ""),
@@ -4735,7 +4776,7 @@ async def generate_report_data(report_type: str, filters: dict = None):
         # Add total row
         summary = report.get("summary", {})
         data.append({
-            "Mağaza": "TOPLAM",
+            "Lokasyon": "TOPLAM",
             "Bölge": "",
             "İl": "",
             "İlçe": "",
@@ -4758,7 +4799,7 @@ async def generate_report_data(report_type: str, filters: dict = None):
         data = []
         for s in report.get("stores", []):
             data.append({
-                "Mağaza": s.get("store_name", ""),
+                "Lokasyon": s.get("store_name", ""),
                 "Bölge": s.get("region_name", ""),
                 "İl": s.get("city_name", ""),
                 "İlçe": s.get("district_name", ""),
@@ -4772,7 +4813,7 @@ async def generate_report_data(report_type: str, filters: dict = None):
         # Add total row with meaningful summary
         summary = report.get("summary", {})
         data.append({
-            "Mağaza": "TOPLAM",
+            "Lokasyon": "TOPLAM",
             "Bölge": "",
             "İl": "",
             "İlçe": "",
@@ -4801,7 +4842,7 @@ async def generate_report_data(report_type: str, filters: dict = None):
         data_source_note = report.get("data_source_note", "")
         if data_source == "live_vms":
             data.append({
-                "Mağaza": f"⚠️ VERİ KAYNAĞI: {data_source_note}",
+                "Lokasyon": f"⚠️ VERİ KAYNAĞI: {data_source_note}",
                 "Bölge": "",
                 "İl": "",
                 "İlçe": "",
@@ -4814,7 +4855,7 @@ async def generate_report_data(report_type: str, filters: dict = None):
         
         for s in report.get("stores", []):
             data.append({
-                "Mağaza": s.get("store_name", ""),
+                "Lokasyon": s.get("store_name", ""),
                 "Bölge": s.get("region_name", ""),
                 "İl": s.get("city_name", ""),
                 "İlçe": s.get("district_name", ""),
@@ -4828,7 +4869,7 @@ async def generate_report_data(report_type: str, filters: dict = None):
         # Add total row
         summary = report.get("summary", {})
         data.append({
-            "Mağaza": "TOPLAM",
+            "Lokasyon": "TOPLAM",
             "Bölge": "",
             "İl": "",
             "İlçe": "",
@@ -4949,7 +4990,7 @@ async def generate_report_data(report_type: str, filters: dict = None):
         for s in counter_data:
             store_info = stores_map.get(s["store_id"], {})
             store_data.append({
-                "Mağaza": s["store_name"],
+                "Lokasyon": s["store_name"],
                 "Bölge": store_info.get("region_name", ""),
                 "İl": store_info.get("city_name", ""),
                 "İlçe": store_info.get("district_name", ""),
@@ -4966,7 +5007,7 @@ async def generate_report_data(report_type: str, filters: dict = None):
         avg_occupancy = sum(s["Doluluk %"] for s in store_data) / len(store_data) if store_data else 0
         
         store_data.append({
-            "Mağaza": "TOPLAM",
+            "Lokasyon": "TOPLAM",
             "Bölge": "",
             "İl": "",
             "İlçe": "",
@@ -4988,7 +5029,7 @@ async def generate_report_data(report_type: str, filters: dict = None):
             if s["total_queue_length"] >= min_queue_length:
                 store_info = stores_map.get(s["store_id"], {})
                 queue_list.append({
-                    "Mağaza": s["store_name"],
+                    "Lokasyon": s["store_name"],
                     "Bölge": store_info.get("region_name", ""),
                     "İl": store_info.get("city_name", ""),
                     "İlçe": store_info.get("district_name", ""),
@@ -5000,7 +5041,7 @@ async def generate_report_data(report_type: str, filters: dict = None):
         # Add total row
         total_queue = sum(q["Kuyruk Uzunluğu"] for q in queue_list)
         queue_list.append({
-            "Mağaza": "TOPLAM",
+            "Lokasyon": "TOPLAM",
             "Bölge": "",
             "İl": "",
             "İlçe": "",
@@ -5084,7 +5125,7 @@ async def generate_report_data(report_type: str, filters: dict = None):
         alert_data = []
         for d in docs:
             alert_data.append({
-                "Mağaza":      d.get("store_name", ""),
+                "Lokasyon":      d.get("store_name", ""),
                 "Tür":         type_tr.get(d.get("alert_type", ""), d.get("alert_type", "")),
                 "Seviye":      level_tr.get(d.get("level", ""), d.get("level", "")),
                 "Başlangıç":   (d.get("started_at") or "")[:16].replace("T", " "),
@@ -5172,7 +5213,7 @@ async def send_scheduled_report(report: dict, smtp_settings: dict):
             for d in report_data.get("data", [])[:20]:
                 bg = "#fff0f0" if d.get("Seviye") == "Kritik" else "#fffbea"
                 rows += (f"<tr style='background:{bg}'>"
-                         f"<td style='padding:4px 8px;border:1px solid #eee'>{d.get('Mağaza','')}</td>"
+                         f"<td style='padding:4px 8px;border:1px solid #eee'>{d.get('Lokasyon','')}</td>"
                          f"<td style='padding:4px 8px;border:1px solid #eee'>{d.get('Tür','')}</td>"
                          f"<td style='padding:4px 8px;border:1px solid #eee;font-weight:bold'>{d.get('Seviye','')}</td>"
                          f"<td style='padding:4px 8px;border:1px solid #eee'>{d.get('Başlangıç','')}</td>"
@@ -5216,7 +5257,7 @@ async def send_scheduled_report(report: dict, smtp_settings: dict):
         <html>
         <body style="font-family: Arial, sans-serif; padding: 20px; background: #f9fafb;">
             <div style="max-width: 680px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px;">
-                <h2 style="color: #3B82F6; margin-bottom: 20px;">VMS360 Retail Panel</h2>
+                <h2 style="color: #3B82F6; margin-bottom: 20px;">VMS360 Stats & LPR</h2>
                 <h3 style="color: #1F2937;">{report['name']}</h3>
                 <p style="color: #6B7280;">Rapor Tipi: <strong>{report_data['type']}</strong></p>
                 <p style="color: #6B7280;">Tarih: <strong>{datetime.now().strftime('%d.%m.%Y %H:%M')}</strong></p>
@@ -5224,7 +5265,7 @@ async def send_scheduled_report(report: dict, smtp_settings: dict):
                 {alerts_summary_html}
                 <p style="color: #6B7280;">Rapor dosyası ekte yer almaktadır.</p>
                 <p style="color: #9CA3AF; font-size: 12px; margin-top: 30px;">
-                    Bu e-posta VMS360 Retail Panel planlı rapor sistemi tarafından otomatik olarak gönderilmiştir.
+                    Bu e-posta VMS360 Stats & LPR planlı rapor sistemi tarafından otomatik olarak gönderilmiştir.
                 </p>
             </div>
         </body>
@@ -5286,7 +5327,7 @@ async def send_scheduled_report(report: dict, smtp_settings: dict):
                 
                 # Data rows
                 for row, item in enumerate(data, 1):
-                    is_total = item.get("Mağaza") == "TOPLAM" or item.get("Saat") == "TOPLAM" or item.get("Gün") == "TOPLAM"
+                    is_total = item.get("Lokasyon") == "TOPLAM" or item.get("Saat") == "TOPLAM" or item.get("Gün") == "TOPLAM"
                     for col, key in enumerate(headers):
                         value = item.get(key, "")
                         if is_total:
@@ -5382,7 +5423,7 @@ async def export_analytics_excel(
     ws.merge_cells('A1:F1')
     
     ws['A2'] = f"Oluşturulma: {datetime.now().strftime('%d.%m.%Y %H:%M')}"
-    ws['A3'] = f"Filtreler: Bölge: {export_data.filters.get('region', 'Tümü')}, Şehir: {export_data.filters.get('city', 'Tümü')}, Mağaza: {export_data.filters.get('store', 'Tümü')}"
+    ws['A3'] = f"Filtreler: Bölge: {export_data.filters.get('region', 'Tümü')}, Şehir: {export_data.filters.get('city', 'Tümü')}, Lokasyon: {export_data.filters.get('store', 'Tümü')}"
     
     row = 5
     data = export_data.data
@@ -5465,7 +5506,7 @@ async def export_analytics_excel(
         ws[f'A{row}'].font = Font(bold=True, size=12)
         row += 1
         
-        headers = ["Mağaza", "Ziyaretçi/Gün", "Doluluk %", "Dönüşüm %"]
+        headers = ["Lokasyon", "Ziyaretçi/Gün", "Doluluk %", "Dönüşüm %"]
         for col, header in enumerate(headers, 1):
             cell = ws.cell(row=row, column=col, value=header)
             cell.fill = header_fill
@@ -5523,7 +5564,7 @@ async def export_analytics_pdf(
     # Title
     elements.append(Paragraph("VMS360 - Gelişmiş Analitik Raporu", title_style))
     elements.append(Paragraph(f"Oluşturulma: {datetime.now().strftime('%d.%m.%Y %H:%M')}", subtitle_style))
-    filters_text = f"Filtreler: Bölge: {export_data.filters.get('region', 'Tümü')}, Şehir: {export_data.filters.get('city', 'Tümü')}, Mağaza: {export_data.filters.get('store', 'Tümü')}"
+    filters_text = f"Filtreler: Bölge: {export_data.filters.get('region', 'Tümü')}, Şehir: {export_data.filters.get('city', 'Tümü')}, Lokasyon: {export_data.filters.get('store', 'Tümü')}"
     elements.append(Paragraph(filters_text, subtitle_style))
     elements.append(Spacer(1, 0.5*cm))
     
@@ -5562,7 +5603,7 @@ async def export_analytics_pdf(
     # Store comparison
     if data.get('store_comparison') and data['store_comparison'].get('stores'):
         elements.append(Paragraph("Mağaza Performans Karşılaştırması", header_style))
-        store_data = [["Mağaza", "Ziyaretçi/Gün", "Doluluk %", "Dönüşüm %"]]
+        store_data = [["Lokasyon", "Ziyaretçi/Gün", "Doluluk %", "Dönüşüm %"]]
         for store in data['store_comparison']['stores'][:10]:  # Top 10
             store_data.append([
                 store.get('store_name', ''),

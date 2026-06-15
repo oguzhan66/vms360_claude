@@ -1,95 +1,109 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Layout } from '../components/Layout';
-import { FilterBar } from '../components/FilterBar';
-import { StoreCard } from '../components/StoreCard';
-import { StatCard } from '../components/StatCard';
-import { AlertPanel } from '../components/AlertPanel';
-import { liveDataApi, reportApi, healthApi } from '../services/api';
-import api from '../services/api';
-import { Users, TrendingUp, TrendingDown, AlertTriangle, Store, ListOrdered, WifiOff, UserCheck, Bell } from 'lucide-react';
+import { vmsEventsApi } from '../services/api';
+import { Car, Bell, AlertTriangle, Info, Server, RefreshCw, ShieldAlert } from 'lucide-react';
 import {
   PieChart, Pie, Cell, ResponsiveContainer,
-  AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid,
-  BarChart, Bar
+  BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
 } from 'recharts';
 
-const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'];
+const LEVEL_COLORS = { Bildirim: '#3B82F6', Alarm: '#F59E0B', Hata: '#EF4444' };
+const BAR_COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#14B8A6', '#F97316'];
+
+const StatCard = ({ label, value, icon: Icon, color = 'text-foreground', bg = 'bg-secondary/30' }) => (
+  <div className={`${bg} border border-border rounded-lg p-4 flex items-center gap-4`}>
+    <Icon className={`w-8 h-8 ${color} opacity-80 shrink-0`} />
+    <div>
+      <div className={`text-2xl font-mono font-bold ${color}`}>{value ?? '—'}</div>
+      <div className="text-xs text-muted-foreground mt-0.5">{label}</div>
+    </div>
+  </div>
+);
 
 const Dashboard = () => {
-  const [showAlertPanel, setShowAlertPanel] = useState(false);
-  const [activeAlertCount, setActiveAlertCount] = useState(0);
-  const [counterData, setCounterData] = useState([]);
-  const [queueData, setQueueData] = useState([]);
-  const [analyticsData, setAnalyticsData] = useState(null);
-  const [summary, setSummary] = useState(null);
-  const [filters, setFilters] = useState({});
-  const [refreshInterval, setRefreshInterval] = useState(30);
-  const [loading, setLoading] = useState(true);
-  const [healthStatus, setHealthStatus] = useState(null);
-  const [lastUpdated, setLastUpdated] = useState(null);
+  const [alarmData,     setAlarmData]     = useState(null);
+  const [lprData,       setLprData]       = useState(null);
+  const [lprByCamera,   setLprByCamera]   = useState([]);
+  const [loading,       setLoading]       = useState(true);
+  const [lastUpdated,   setLastUpdated]   = useState(null);
 
   const loadData = useCallback(async () => {
     try {
-      const [counterRes, queueRes, summaryRes, healthRes, analyticsRes] = await Promise.all([
-        liveDataApi.getCounter(),
-        liveDataApi.getQueue(),
-        reportApi.getSummary(filters),
-        healthApi.getStatus().catch(() => ({ data: null })),
-        liveDataApi.getAnalytics({ time_from: new Date(Date.now() - 86400000).toISOString(), time_to: new Date().toISOString() }).catch(() => ({ data: null })),
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const timeFrom = today.toISOString();
+      const timeTo = new Date().toISOString();
+
+      const [alarmRes, lprRes, lprCamRes] = await Promise.allSettled([
+        vmsEventsApi.getAlarms({ time_from: timeFrom, time_to: timeTo, levels: '0,1,2' }),
+        vmsEventsApi.getLPR({ time_from: timeFrom, time_to: timeTo }),
+        vmsEventsApi.getLPRByCamera({ time_from: timeFrom, time_to: timeTo }),
       ]);
-      setCounterData(counterRes.data);
-      setQueueData(queueRes.data);
-      setSummary(summaryRes.data);
-      setHealthStatus(healthRes.data);
-      setAnalyticsData(analyticsRes.data);
+
+      if (alarmRes.status === 'fulfilled') setAlarmData(alarmRes.value.data);
+      if (lprRes.status === 'fulfilled') setLprData(lprRes.value.data);
+      if (lprCamRes.status === 'fulfilled') setLprByCamera(lprCamRes.value.data.cameras || []);
       setLastUpdated(new Date());
-      // Aktif uyarı sayısını çek
-      try {
-        const alertRes = await api.get('/alerts?status=active&limit=50');
-        setActiveAlertCount((alertRes.data.alerts || []).length);
-      } catch {}
     } catch (e) {
-      console.error('Failed to load data', e);
+      console.error('Dashboard load error', e);
     } finally {
       setLoading(false);
     }
-  }, [filters]);
+  }, []);
+
+  useEffect(() => { loadData(); }, [loadData]);
 
   useEffect(() => {
-    loadData();
+    const timer = setInterval(loadData, 60000);
+    return () => clearInterval(timer);
   }, [loadData]);
 
-  useEffect(() => {
-    if (refreshInterval > 0) {
-      const timer = setInterval(loadData, refreshInterval * 1000);
-      return () => clearInterval(timer);
-    }
-  }, [refreshInterval, loadData]);
+  // Alarm level pie data
+  const levelPieData = alarmData?.counts
+    ? Object.entries(alarmData.counts)
+        .filter(([, v]) => v > 0)
+        .map(([k, v]) => ({ name: k, value: v, color: LEVEL_COLORS[k] || '#6B7280' }))
+    : [];
 
-  const filteredCounterData = counterData.filter(store => {
-    if (filters.region_id && store.region_id !== filters.region_id) return false;
-    if (filters.city_id && store.city_id !== filters.city_id) return false;
-    if (filters.district_id && store.district_id !== filters.district_id) return false;
-    if (filters.store_ids && store.store_id !== filters.store_ids) return false;
-    return true;
-  });
+  // Top cameras bar data (top 8)
+  const topCameras = alarmData?.stats?.by_camera
+    ? Object.entries(alarmData.stats.by_camera)
+        .slice(0, 8)
+        .map(([name, count], i) => ({ name: name.length > 18 ? name.slice(0, 16) + '…' : name, count, fill: BAR_COLORS[i % BAR_COLORS.length] }))
+    : [];
 
-  const statusCounts = {
-    normal: filteredCounterData.filter(s => s.status === 'normal').length,
-    warning: filteredCounterData.filter(s => s.status === 'warning').length,
-    critical: filteredCounterData.filter(s => s.status === 'critical').length,
+  // Hourly alarm data
+  const hourlyData = alarmData?.stats?.by_hour
+    ? Array.from({ length: 24 }, (_, h) => ({
+        hour: `${String(h).padStart(2, '0')}:00`,
+        alarm: alarmData.stats.by_hour[String(h)] || 0,
+      }))
+    : [];
+
+  // Event type cards (from by_type stats)
+  const typeColors = ['#3B82F6','#10B981','#F59E0B','#EF4444','#8B5CF6','#EC4899','#14B8A6','#F97316'];
+  const TYPE_LABELS = {
+    LPR:             'Plaka Tanıma (LPR)',
+    NNEvent:         'Neural Network',
+    Motion:          'Hareket Algılama',
+    FaceRecognition: 'Yüz Tanıma',
+    FR:              'Yüz Tanıma',
+    Queue:           'Kuyruk Algılama',
+    VideoLoss:       'Video Kaybı',
+    Connection:      'Bağlantı',
+    DiskFull:        'Disk Dolu',
+    Analytics:       'Analitik',
   };
+  const typeCards = alarmData?.stats?.by_type
+    ? Object.entries(alarmData.stats.by_type)
+        .sort((a, b) => b[1] - a[1])
+        .map(([type, count], i) => ({ type, label: TYPE_LABELS[type] || type, count, color: typeColors[i % typeColors.length] }))
+    : [];
 
-  const pieData = [
-    { name: 'Normal', value: statusCounts.normal, color: '#10B981' },
-    { name: 'Uyari', value: statusCounts.warning, color: '#F59E0B' },
-    { name: 'Kritik', value: statusCounts.critical, color: '#EF4444' },
-  ].filter(d => d.value > 0);
+  // Top plates
+  const topPlates = lprData?.stats?.top_plates?.slice(0, 10) || [];
 
-  const totalVisitors = filteredCounterData.reduce((sum, s) => sum + s.current_visitors, 0);
-  const totalIn = filteredCounterData.reduce((sum, s) => sum + s.total_in, 0);
-  const totalOut = filteredCounterData.reduce((sum, s) => sum + s.total_out, 0);
-  const totalQueue = queueData.reduce((sum, s) => sum + s.total_queue_length, 0);
+  const levelMap = { '0': 'Bildirim', '1': 'Alarm', '2': 'Hata' };
 
   return (
     <Layout>
@@ -97,317 +111,254 @@ const Dashboard = () => {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-bold">Dashboard</h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              Tum magazalarin canli izleme paneli
-            </p>
+            <p className="text-sm text-muted-foreground mt-1">Bugünkü alarm ve LPR istatistikleri</p>
           </div>
           <div className="flex items-center gap-3">
-            {/* Uyarı Merkezi butonu */}
             <button
-              onClick={() => setShowAlertPanel(true)}
-              className="relative flex items-center gap-2 px-3 py-2 bg-secondary/50 hover:bg-secondary rounded-lg border border-border transition-colors"
+              onClick={loadData}
+              className="flex items-center gap-2 px-3 py-2 bg-secondary/50 hover:bg-secondary rounded-lg border border-border transition-colors text-sm"
             >
-              <Bell className={`w-4 h-4 ${activeAlertCount > 0 ? 'text-amber-400' : 'text-muted-foreground'}`} />
-              <span className="text-sm">Uyarılar</span>
-              {activeAlertCount > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-bold">
-                  {activeAlertCount}
-                </span>
-              )}
+              <RefreshCw className="w-4 h-4" />
+              Yenile
             </button>
-            <div className="text-right">
-              <div className="text-xs text-muted-foreground">Son guncelleme</div>
-              <div className="font-mono text-sm">
-                {lastUpdated ? lastUpdated.toLocaleTimeString('tr-TR') : '—'}
-              </div>
+            <div className="text-right text-xs text-muted-foreground">
+              <div>Son güncelleme</div>
+              <div className="font-mono">{lastUpdated ? lastUpdated.toLocaleTimeString('tr-TR') : '—'}</div>
             </div>
           </div>
-
         </div>
       </div>
 
-      {showAlertPanel && <AlertPanel onClose={() => setShowAlertPanel(false)} />}
-
       <div className="page-content">
-        <FilterBar 
-          onFilterChange={setFilters}
-          onRefresh={loadData}
-          refreshInterval={refreshInterval}
-          onIntervalChange={setRefreshInterval}
-          showStoreFilter={true}
-        />
+        {/* KPI Cards */}
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
+          <StatCard
+            label="Toplam Alarm (Bugün)"
+            value={loading ? '…' : (alarmData?.total ?? 0)}
+            icon={ShieldAlert}
+            color="text-foreground"
+            bg="bg-secondary/30"
+          />
+          <StatCard
+            label="Bildirim"
+            value={loading ? '…' : (alarmData?.counts?.Bildirim ?? 0)}
+            icon={Info}
+            color="text-blue-600 dark:text-blue-400"
+            bg="bg-blue-500/5"
+          />
+          <StatCard
+            label="Alarm"
+            value={loading ? '…' : (alarmData?.counts?.Alarm ?? 0)}
+            icon={Bell}
+            color="text-amber-600 dark:text-amber-400"
+            bg="bg-amber-500/5"
+          />
+          <StatCard
+            label="Hata"
+            value={loading ? '…' : (alarmData?.counts?.Hata ?? 0)}
+            icon={AlertTriangle}
+            color="text-red-600 dark:text-red-400"
+            bg="bg-red-500/5"
+          />
+          <StatCard
+            label="LPR Geçiş (Bugün)"
+            value={loading ? '…' : (lprData?.total ?? 0)}
+            icon={Car}
+            color="text-emerald-600 dark:text-emerald-400"
+            bg="bg-emerald-500/5"
+          />
+          <StatCard
+            label="Benzersiz Plaka"
+            value={loading ? '…' : (lprData?.unique_plates ?? 0)}
+            icon={Server}
+            color="text-purple-600 dark:text-purple-400"
+            bg="bg-purple-500/5"
+          />
+        </div>
 
-        {/* Offline Store Alert - P0: Veri gelmeme alarmı */}
-        {healthStatus && healthStatus.summary?.offline > 0 && (
-          <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 mb-6" data-testid="offline-alert">
-            <div className="flex items-center gap-3">
-              <WifiOff className="w-5 h-5 text-red-500" />
-              <div>
-                <div className="font-semibold text-red-500">
-                  {healthStatus.summary.offline} magaza cevrimdisi
-                </div>
-                <div className="text-sm text-muted-foreground">
-                  {healthStatus.stores
-                    ?.filter(s => s.status === 'offline')
-                    .map(s => s.store_name)
-                    .join(', ')} - Son 30 dakikadir veri alinamiyor
-                </div>
-              </div>
+        {/* Event Type Cards */}
+        {(loading || typeCards.length > 0) && (
+          <div className="mb-6">
+            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Olay Tipi Dağılımı (Bugün)</div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3">
+              {loading
+                ? [...Array(4)].map((_, i) => (
+                    <div key={i} className="bg-secondary/20 border border-border rounded-lg p-3 animate-pulse h-16" />
+                  ))
+                : typeCards.map(({ type, label, count, color }) => (
+                    <div key={type} className="bg-card border border-border rounded-lg p-3 flex flex-col gap-1">
+                      <div className="flex items-center gap-2">
+                        <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: color }} />
+                        <span className="text-xs text-muted-foreground truncate">{label}</span>
+                      </div>
+                      <div className="text-xl font-mono font-bold" style={{ color }}>{count.toLocaleString()}</div>
+                      <div className="text-xs text-muted-foreground font-mono">{type}</div>
+                    </div>
+                  ))
+              }
             </div>
           </div>
         )}
 
-        {/* Summary Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-4 mb-1">
-          <StatCard
-            label="Toplam Magaza"
-            value={filteredCounterData.length}
-            icon={Store}
-            variant="primary"
-          />
-          <StatCard
-            label="Anlik Ziyaretci"
-            value={totalVisitors}
-            icon={Users}
-            variant="success"
-          />
-          <StatCard
-            label="Toplam Giris"
-            value={totalIn}
-            icon={TrendingUp}
-            variant="success"
-          />
-          <StatCard
-            label="Toplam Cikis"
-            value={totalOut}
-            icon={TrendingDown}
-            variant="warning"
-          />
-          <StatCard
-            label="Toplam Kuyruk"
-            value={totalQueue}
-            icon={ListOrdered}
-            variant={totalQueue > 20 ? 'danger' : 'default'}
-          />
-          <StatCard
-            label="Kritik Magaza"
-            value={statusCounts.critical}
-            icon={AlertTriangle}
-            variant="danger"
-          />
-        </div>
-        <div className="flex items-center gap-1 text-xs text-muted-foreground mb-5">
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            Kişi sayma ve kuyruk her 5 dk'da bir güncellenir
-          </span>
-        </div>
-
-        {/* Charts Row */}
+        {/* Charts Row 1 */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-          {/* Status Distribution */}
+          {/* Alarm Level Pie */}
           <div className="chart-container">
-            <div className="chart-title">Magaza Durum Dagilimi</div>
+            <div className="chart-title">Alarm Seviye Dağılımı</div>
             <div className="h-48">
-              {pieData.length > 0 ? (
+              {levelPieData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
-                    <Pie
-                      data={pieData}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={40}
-                      outerRadius={70}
-                      paddingAngle={2}
-                      dataKey="value"
-                    >
-                      {pieData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} />
+                    <Pie data={levelPieData} cx="50%" cy="50%" innerRadius={45} outerRadius={72} paddingAngle={2} dataKey="value">
+                      {levelPieData.map((entry, i) => (
+                        <Cell key={i} fill={entry.color} />
                       ))}
                     </Pie>
-                    <Tooltip 
-                      contentStyle={{ 
-                        background: 'hsl(var(--card))', 
-                        border: '1px solid hsl(var(--border))',
-                        borderRadius: '4px',
-                        color: 'hsl(var(--foreground))'
-                      }}
+                    <Tooltip
+                      contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '4px', color: 'hsl(var(--foreground))' }}
                     />
                   </PieChart>
                 </ResponsiveContainer>
               ) : (
                 <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
-                  Veri yok
+                  {loading ? 'Yükleniyor…' : 'Bugün alarm yok'}
                 </div>
               )}
             </div>
             <div className="flex justify-center gap-4 mt-2">
-              {pieData.map((item, idx) => (
-                <div key={idx} className="flex items-center gap-2 text-xs">
-                  <div className="w-3 h-3" style={{ background: item.color }} />
+              {levelPieData.map((item, i) => (
+                <div key={i} className="flex items-center gap-1.5 text-xs">
+                  <div className="w-3 h-3 rounded-sm" style={{ background: item.color }} />
                   <span className="text-muted-foreground">{item.name}: {item.value}</span>
                 </div>
               ))}
             </div>
           </div>
 
-          {/* Top Stores by Visitors */}
+          {/* Top Cameras */}
           <div className="chart-container col-span-2">
-            <div className="chart-title">En Yogun Magazalar</div>
-            <div className="space-y-3">
-              {filteredCounterData
-                .filter(s => s.current_visitors > 0)
-                .sort((a, b) => b.current_visitors - a.current_visitors)
-                .slice(0, 5)
-                .map((store, idx) => (
-                  <div key={store.store_id} className="flex items-center gap-3">
-                    <div className="w-6 h-6 bg-white/5 flex items-center justify-center text-xs font-mono">
-                      {idx + 1}
-                    </div>
-                    <div className="flex-1">
-                      <div className="text-sm font-medium">{store.store_name}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {store.district_name}, {store.city_name}
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className={`font-mono text-lg font-bold ${store.status === 'critical' ? 'text-red-400' : store.status === 'warning' ? 'text-amber-400' : 'text-emerald-400'}`}>
-                        {store.current_visitors}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        %{store.occupancy_percent}
-                      </div>
-                    </div>
-                    <div className={`w-2 h-8 ${store.status === 'critical' ? 'bg-red-500' : store.status === 'warning' ? 'bg-amber-500' : 'bg-emerald-500'}`} />
-                  </div>
-                ))}
-              {filteredCounterData.length === 0 && (
-                <div className="text-center py-8 text-muted-foreground text-sm">
-                  Henuz magaza eklenmedi
+            <div className="chart-title">En Çok Alarm Gelen Kameralar</div>
+            <div className="h-52">
+              {topCameras.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={topCameras} layout="vertical" margin={{ left: 8, right: 16 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" horizontal={false} />
+                    <XAxis type="number" tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} />
+                    <YAxis dataKey="name" type="category" width={110} tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} />
+                    <Tooltip
+                      contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '4px' }}
+                      formatter={(v) => [v, 'Alarm']}
+                    />
+                    <Bar dataKey="count" radius={[0, 4, 4, 0]}>
+                      {topCameras.map((entry, i) => (
+                        <Cell key={i} fill={entry.fill} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
+                  {loading ? 'Yükleniyor…' : 'Kamera verisi yok'}
                 </div>
               )}
             </div>
           </div>
         </div>
 
-        {/* Kuyruk + Demografik Row */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+        {/* LPR Kamera Özeti — kompakt kartlar */}
+        {lprByCamera.length > 0 && (
+          <div className="mb-6">
+            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
+              <Car className="w-3.5 h-3.5" />
+              Kapı / Kamera Bazlı Geçişler (Bugün)
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+              {lprByCamera.map((cam, i) => (
+                <div key={i} className="bg-card border border-border rounded-lg p-3 space-y-2">
+                  <div className="text-sm font-medium truncate">{cam.camera_name || cam.camera_id || '—'}</div>
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span>Toplam</span>
+                    <span className="font-mono font-bold text-foreground">{cam.total}</span>
+                  </div>
+                  <div className="flex gap-2 text-xs">
+                    <div className="flex-1 bg-emerald-500/10 rounded px-2 py-1 text-center">
+                      <div className="font-mono font-bold text-emerald-600 dark:text-emerald-400">{cam.entry}</div>
+                      <div className="text-muted-foreground">Giriş</div>
+                    </div>
+                    <div className="flex-1 bg-red-500/10 rounded px-2 py-1 text-center">
+                      <div className="font-mono font-bold text-red-600 dark:text-red-400">{cam.exit}</div>
+                      <div className="text-muted-foreground">Çıkış</div>
+                    </div>
+                    {cam.unknown > 0 && (
+                      <div className="flex-1 bg-secondary/50 rounded px-2 py-1 text-center">
+                        <div className="font-mono font-bold text-muted-foreground">{cam.unknown}</div>
+                        <div className="text-muted-foreground">?</div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
-          {/* Kuyruk Durumu */}
+        {/* Charts Row 2 */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+          {/* Saatlik Alarm Dağılımı */}
+          <div className="chart-container">
+            <div className="chart-title">Saatlik Alarm Dağılımı (Bugün)</div>
+            <div className="h-48">
+              {hourlyData.some(d => d.alarm > 0) ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={hourlyData} margin={{ left: 0, right: 8 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                    <XAxis dataKey="hour" tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 9 }} interval={3} />
+                    <YAxis tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} />
+                    <Tooltip
+                      contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '4px' }}
+                      formatter={(v) => [v, 'Alarm']}
+                    />
+                    <Bar dataKey="alarm" fill="#F59E0B" radius={[2, 2, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
+                  {loading ? 'Yükleniyor…' : 'Bugün alarm yok'}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* En Çok Geçiş Yapan Plakalar */}
           <div className="chart-container">
             <div className="chart-title flex items-center gap-2">
-              <ListOrdered className="w-4 h-4 text-amber-400" />
-              <span>Kuyruk Durumu</span>
-              <span className="ml-auto text-xs font-normal text-muted-foreground">Her 5 dk'da bir güncellenir</span>
+              <Car className="w-4 h-4 text-emerald-400" />
+              En Çok Geçiş Yapan Plakalar (Bugün)
             </div>
-            {queueData.length > 0 ? (
-              <div className="space-y-3 mt-2">
-                {queueData.map(store => (
-                  <div key={store.store_id} className="flex items-center gap-3">
-                    <div className="flex-1">
-                      <div className="text-sm font-medium">{store.store_name}</div>
-                      <div className="text-xs text-muted-foreground">{store.city_name}</div>
+            {topPlates.length > 0 ? (
+              <div className="space-y-2 mt-2">
+                {topPlates.map((item, i) => (
+                  <div key={i} className="flex items-center gap-3">
+                    <span className="text-xs text-muted-foreground w-5 text-right">{i + 1}</span>
+                    <span className="font-mono text-sm font-semibold bg-secondary/50 px-2 py-0.5 rounded tracking-wider">{item.plate}</span>
+                    <div className="flex-1 h-2 bg-white/10 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-emerald-500 rounded-full"
+                        style={{ width: `${Math.round((item.count / topPlates[0].count) * 100)}%` }}
+                      />
                     </div>
-                    <div className="text-right">
-                      <div className={`font-mono font-bold text-lg ${store.status === 'critical' ? 'text-red-400' : store.status === 'warning' ? 'text-amber-400' : 'text-emerald-400'}`}>
-                        {store.total_queue_length}
-                      </div>
-                      <div className="text-xs text-muted-foreground">kişi</div>
-                    </div>
-                    <div className="w-24">
-                      <div className="text-xs text-muted-foreground mb-1">Eşik: {store.queue_threshold}</div>
-                      <div className="h-2 bg-white/10 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full rounded-full ${store.status === 'critical' ? 'bg-red-500' : store.status === 'warning' ? 'bg-amber-500' : 'bg-emerald-500'}`}
-                          style={{ width: `${Math.min(100, (store.total_queue_length / (store.queue_threshold * 2)) * 100)}%` }}
-                        />
-                      </div>
-                    </div>
-                    <div className={`w-2 h-8 rounded-full ${store.status === 'critical' ? 'bg-red-500' : store.status === 'warning' ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+                    <span className="text-sm font-mono font-bold text-emerald-400 w-8 text-right">{item.count}</span>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="h-24 flex items-center justify-center text-sm text-muted-foreground">Kuyruk verisi yok</div>
+              <div className="h-24 flex items-center justify-center text-sm text-muted-foreground">
+                {loading ? 'Yükleniyor…' : 'Bugün LPR verisi yok'}
+              </div>
             )}
           </div>
-
-          {/* Demografik Özet */}
-          <div className="chart-container">
-            <div className="chart-title flex items-center gap-2">
-              <UserCheck className="w-4 h-4 text-purple-400" />
-              <span>Yaş/Cinsiyet Özeti (Bugün)</span>
-              <span className="ml-auto text-xs font-normal text-muted-foreground">Her 15 dk'da bir güncellenir</span>
-            </div>
-            {(() => {
-              const total = analyticsData?.total_events || analyticsData?.summary?.total_detections || 0;
-              const male = analyticsData?.gender_distribution?.Male || 0;
-              const female = analyticsData?.gender_distribution?.Female || 0;
-              const ageDist = analyticsData?.age_distribution || {};
-              const ageData = Object.entries(ageDist).map(([k, v]) => ({ age: k, sayi: v }));
-              return total > 0 ? (
-                <div className="mt-2">
-                  <div className="grid grid-cols-3 gap-3 mb-4">
-                    <div className="text-center p-2 bg-secondary/30 rounded">
-                      <div className="text-xl font-mono font-bold">{total}</div>
-                      <div className="text-xs text-muted-foreground">Toplam Tespit</div>
-                    </div>
-                    <div className="text-center p-2 bg-blue-500/10 rounded">
-                      <div className="text-xl font-mono font-bold text-blue-400">{male}</div>
-                      <div className="text-xs text-muted-foreground">Erkek</div>
-                    </div>
-                    <div className="text-center p-2 bg-pink-500/10 rounded">
-                      <div className="text-xl font-mono font-bold text-pink-400">{female}</div>
-                      <div className="text-xs text-muted-foreground">Kadın</div>
-                    </div>
-                  </div>
-                  <div className="h-28">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={ageData} layout="vertical">
-                        <XAxis type="number" tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }} />
-                        <YAxis dataKey="age" type="category" width={40} tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }} />
-                        <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '4px' }} />
-                        <Bar dataKey="sayi" fill="#8B5CF6" radius={[0, 4, 4, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-              ) : (
-                <div className="h-24 flex items-center justify-center text-sm text-muted-foreground">
-                  {analyticsData ? 'Bugün analitik verisi yok' : 'Yükleniyor...'}
-                </div>
-              );
-            })()}
-          </div>
         </div>
 
-        {/* Store Grid */}
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Tum Magazalar</h2>
-          <span className="text-sm text-muted-foreground font-mono">
-            {filteredCounterData.length} magaza
-          </span>
-        </div>
-
-        {loading ? (
-          <div className="bento-grid">
-            {[...Array(8)].map((_, i) => (
-              <div key={i} className="store-card loading-skeleton h-48" />
-            ))}
-          </div>
-        ) : filteredCounterData.length > 0 ? (
-          <div className="bento-grid">
-            {filteredCounterData.map((store) => (
-              <StoreCard key={store.store_id} store={store} />
-            ))}
-          </div>
-        ) : (
-          <div className="text-center py-16 text-muted-foreground">
-            <Store className="w-12 h-12 mx-auto mb-4 opacity-50" />
-            <p>Henuz magaza eklenmedi.</p>
-            <p className="text-sm mt-1">VMS ve magaza tanimlamalarini yaparak baslayabilirsiniz.</p>
-          </div>
-        )}
       </div>
     </Layout>
   );

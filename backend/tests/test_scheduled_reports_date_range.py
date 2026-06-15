@@ -65,7 +65,7 @@ class TestScheduledReportsDateRange:
         # If there's data, verify it has expected structure
         if data["data_count"] > 0:
             sample = data["sample_data"][0]
-            assert "Mağaza" in sample or "store_name" in str(sample).lower()
+            assert "Lokasyon" in sample or "store_name" in str(sample).lower()
     
     def test_debug_test_report_generation_30d(self):
         """Test report generation with date_range=30d"""

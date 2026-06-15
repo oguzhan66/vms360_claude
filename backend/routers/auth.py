@@ -1,13 +1,13 @@
 """Authentication routes"""
 from fastapi import APIRouter, HTTPException, Depends, Response
-from typing import List
+from typing import List, Optional
 from datetime import datetime, timezone
 
 from database import db
 from models import UserCreate, UserLogin, UserResponse, UserUpdate
 from auth import (
     verify_password, get_password_hash, create_access_token, create_refresh_token,
-    decode_refresh_token, hash_token, require_auth, require_admin,
+    decode_refresh_token, hash_token, require_auth, require_admin, require_super_admin,
     ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS
 )
 
@@ -17,14 +17,40 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 @router.post("/login")
 async def login(credentials: UserLogin, response: Response):
     """User login - returns access_token and refresh_token"""
-    user = await db.users.find_one({"username": credentials.username}, {"_id": 0})
+    if credentials.tenant_slug:
+        # Tenant-scoped login: find tenant by slug first, then user within that tenant
+        tenant = await db.tenants.find_one({"slug": credentials.tenant_slug}, {"_id": 0})
+        if not tenant:
+            raise HTTPException(status_code=401, detail="Şirket kodu bulunamadı")
+        if not tenant.get("is_active", True):
+            raise HTTPException(status_code=401, detail="Şirket hesabı devre dışı")
+        user = await db.users.find_one(
+            {"username": credentials.username, "tenant_id": tenant["id"]}, {"_id": 0}
+        )
+    else:
+        # No tenant slug → only super_admin can login without slug
+        user = await db.users.find_one(
+            {"username": credentials.username, "role": "super_admin"}, {"_id": 0}
+        )
+        if not user:
+            # Fallback: allow if only one user with this username exists globally
+            all_matches = await db.users.find({"username": credentials.username}, {"_id": 0}).to_list(5)
+            if len(all_matches) == 1:
+                user = all_matches[0]
+            else:
+                raise HTTPException(status_code=401, detail="Birden fazla hesap bulundu. Şirket kodunuzu girin.")
+
     if not user or not verify_password(credentials.password, user.get("password_hash", "")):
         raise HTTPException(status_code=401, detail="Geçersiz kullanıcı adı veya şifre")
     if not user.get("is_active", True):
         raise HTTPException(status_code=401, detail="Hesap devre dışı")
     
-    token_data = {"sub": user["username"], "role": user.get("role", "operator")}
-    
+    token_data = {
+        "sub": user["username"],
+        "role": user.get("role", "operator"),
+        "tenant_id": user.get("tenant_id"),
+    }
+
     access_token = create_access_token(data=token_data)
     refresh_token = create_refresh_token(data=token_data)
     
@@ -50,7 +76,8 @@ async def login(credentials: UserLogin, response: Response):
         "user": {
             "username": user["username"],
             "full_name": user.get("full_name", ""),
-            "role": user.get("role", "operator")
+            "role": user.get("role", "operator"),
+            "tenant_id": user.get("tenant_id"),
         }
     }
 
@@ -70,12 +97,16 @@ async def refresh_tokens(refresh_token: str):
         raise HTTPException(status_code=401, detail="Refresh token geçersiz veya iptal edilmiş")
     
     # Get user to ensure still active
-    user = await db.users.find_one({"username": username}, {"_id": 0})
+    user = await db.users.find_one({"username": username, "tenant_id": payload.get("tenant_id")}, {"_id": 0})
     if not user or not user.get("is_active", True):
         raise HTTPException(status_code=401, detail="Kullanıcı hesabı devre dışı")
     
-    token_data = {"sub": username, "role": user.get("role", "operator")}
-    
+    token_data = {
+        "sub": username,
+        "role": user.get("role", "operator"),
+        "tenant_id": user.get("tenant_id"),
+    }
+
     # Create new tokens (token rotation)
     new_access_token = create_access_token(data=token_data)
     new_refresh_token = create_refresh_token(data=token_data)
@@ -111,7 +142,7 @@ async def logout(user: dict = Depends(require_auth)):
 @router.get("/me")
 async def get_me(user: dict = Depends(require_auth)):
     """Get current user info with permissions"""
-    db_user = await db.users.find_one({"username": user["username"]}, {"_id": 0, "password_hash": 0})
+    db_user = await db.users.find_one({"username": user["username"], "tenant_id": user.get("tenant_id")}, {"_id": 0, "password_hash": 0})
     if not db_user:
         raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı")
     
@@ -125,11 +156,18 @@ async def get_me(user: dict = Depends(require_auth)):
 
 @router.post("/register", response_model=UserResponse)
 async def register(user_data: UserCreate, current_user: dict = Depends(require_admin)):
-    """Register new user (Admin only)"""
-    existing = await db.users.find_one({"username": user_data.username})
+    """Register new user (Admin only). Admin assigns users to their own tenant."""
+    # super_admin can assign any tenant_id; regular admin uses their own tenant
+    if current_user.get("role") == "super_admin":
+        assigned_tenant_id = user_data.tenant_id
+    else:
+        assigned_tenant_id = current_user.get("tenant_id")
+
+    # Username uniqueness is per-tenant (different tenants can have same username)
+    existing = await db.users.find_one({"username": user_data.username, "tenant_id": assigned_tenant_id})
     if existing:
         raise HTTPException(status_code=400, detail="Bu kullanıcı adı zaten kullanımda")
-    
+
     import uuid
     user_dict = {
         "id": str(uuid.uuid4()),
@@ -137,11 +175,12 @@ async def register(user_data: UserCreate, current_user: dict = Depends(require_a
         "password_hash": get_password_hash(user_data.password),
         "full_name": user_data.full_name,
         "role": user_data.role,
+        "tenant_id": assigned_tenant_id,
         "is_active": True,
         "created_at": datetime.now(timezone.utc),
         "allowed_region_ids": user_data.allowed_region_ids,
         "allowed_city_ids": user_data.allowed_city_ids,
-        "allowed_store_ids": user_data.allowed_store_ids
+        "allowed_store_ids": user_data.allowed_store_ids,
     }
     await db.users.insert_one(user_dict)
     return UserResponse(**user_dict)
@@ -152,9 +191,13 @@ users_router = APIRouter(prefix="/users", tags=["Users"])
 
 
 @users_router.get("", response_model=List[UserResponse])
-async def get_users(user: dict = Depends(require_admin)):
-    """Get all users (Admin only)"""
-    users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(100)
+async def get_users(tenant_id: Optional[str] = None, user: dict = Depends(require_admin)):
+    """Get users. super_admin can filter by tenant_id; admin sees own tenant only."""
+    if user.get("role") == "super_admin":
+        query = {"tenant_id": tenant_id} if tenant_id else {}
+    else:
+        query = {"tenant_id": user.get("tenant_id")}
+    users = await db.users.find(query, {"_id": 0, "password_hash": 0}).to_list(500)
     return users
 
 

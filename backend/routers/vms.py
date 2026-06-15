@@ -1,60 +1,84 @@
 """VMS Management routes"""
-from fastapi import APIRouter, HTTPException
-from typing import List
+from fastapi import APIRouter, HTTPException, Depends, Header
+from typing import List, Optional
 from datetime import datetime
+from pydantic import BaseModel
 
 from database import db
 from models import VMSServer, VMSServerCreate, VMSServerUpdate, Camera, ImportCamerasRequest
 from vms_utils import fetch_vms_data, parse_counter_xml, parse_queue_xml
+from auth import require_auth, resolve_tenant_filter, resolve_tenant_id
 
 router = APIRouter(prefix="/vms", tags=["VMS"])
 
 
-@router.post("", response_model=VMSServer)
-async def create_vms(input: VMSServerCreate):
-    vms_obj = VMSServer(**input.model_dump())
+class GroupRenameRequest(BaseModel):
+    new_name: str
+
+
+@router.post("")
+async def create_vms(input: VMSServerCreate, user: dict = Depends(require_auth), x_tenant_id: Optional[str] = Header(None)):
+    data = input.model_dump()
+    data["tenant_id"] = resolve_tenant_id(user, x_tenant_id)
+    vms_obj = VMSServer(**data)
     doc = vms_obj.model_dump()
-    doc['created_at'] = doc['created_at'].isoformat()
+    doc["created_at"] = doc["created_at"].isoformat()
     await db.vms_servers.insert_one(doc)
-    return vms_obj
+    doc.pop("_id", None)
+    return doc
 
 
-@router.get("", response_model=List[VMSServer])
-async def get_vms_list():
-    servers = await db.vms_servers.find({}, {"_id": 0}).to_list(100)
+@router.get("")
+async def get_vms_list(user: dict = Depends(require_auth), x_tenant_id: Optional[str] = Header(None)):
+    servers = await db.vms_servers.find(resolve_tenant_filter(user, x_tenant_id), {"_id": 0}).to_list(100)
     for s in servers:
-        if isinstance(s.get('created_at'), str):
-            s['created_at'] = datetime.fromisoformat(s['created_at'])
+        if isinstance(s.get("created_at"), str):
+            s["created_at"] = s["created_at"]
     return servers
 
 
-@router.get("/{vms_id}", response_model=VMSServer)
-async def get_vms(vms_id: str):
-    server = await db.vms_servers.find_one({"id": vms_id}, {"_id": 0})
+@router.get("/{vms_id}")
+async def get_vms(vms_id: str, user: dict = Depends(require_auth), x_tenant_id: Optional[str] = Header(None)):
+    query = {"id": vms_id, **resolve_tenant_filter(user, x_tenant_id)}
+    server = await db.vms_servers.find_one(query, {"_id": 0})
     if not server:
         raise HTTPException(status_code=404, detail="VMS not found")
-    if isinstance(server.get('created_at'), str):
-        server['created_at'] = datetime.fromisoformat(server['created_at'])
     return server
 
 
-@router.put("/{vms_id}", response_model=VMSServer)
-async def update_vms(vms_id: str, input: VMSServerUpdate):
+@router.put("/{vms_id}")
+async def update_vms(vms_id: str, input: VMSServerUpdate, user: dict = Depends(require_auth), x_tenant_id: Optional[str] = Header(None)):
     update_data = {k: v for k, v in input.model_dump().items() if v is not None}
     if not update_data:
         raise HTTPException(status_code=400, detail="No data to update")
-    result = await db.vms_servers.update_one({"id": vms_id}, {"$set": update_data})
+    query = {"id": vms_id, **resolve_tenant_filter(user, x_tenant_id)}
+    result = await db.vms_servers.update_one(query, {"$set": update_data})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="VMS not found")
-    return await get_vms(vms_id)
+    return await get_vms(vms_id, user, x_tenant_id)
 
 
 @router.delete("/{vms_id}")
-async def delete_vms(vms_id: str):
-    result = await db.vms_servers.delete_one({"id": vms_id})
+async def delete_vms(vms_id: str, user: dict = Depends(require_auth), x_tenant_id: Optional[str] = Header(None)):
+    query = {"id": vms_id, **resolve_tenant_filter(user, x_tenant_id)}
+    result = await db.vms_servers.delete_one(query)
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="VMS not found")
     return {"status": "deleted"}
+
+
+@router.put("/groups/{old_name}")
+async def rename_vms_group(old_name: str, req: GroupRenameRequest, user: dict = Depends(require_auth), x_tenant_id: Optional[str] = Header(None)):
+    query = {"group_name": old_name, **resolve_tenant_filter(user, x_tenant_id)}
+    result = await db.vms_servers.update_many(query, {"$set": {"group_name": req.new_name.strip()}})
+    return {"updated": result.modified_count}
+
+
+@router.delete("/groups/{old_name}")
+async def delete_vms_group(old_name: str, user: dict = Depends(require_auth), x_tenant_id: Optional[str] = Header(None)):
+    query = {"group_name": old_name, **resolve_tenant_filter(user, x_tenant_id)}
+    result = await db.vms_servers.update_many(query, {"$unset": {"group_name": ""}})
+    return {"updated": result.modified_count}
 
 
 @router.get("/{vms_id}/test")
@@ -171,12 +195,22 @@ async def fetch_vms_cameras(vms_id: str):
                             'type': 'analytics'
                         }
     
-    # Convert to list and filter out disabled cameras optionally
+    # Mark cameras already in DB
+    all_vms_ids = list(all_cameras.keys())
+    existing_in_db = set()
+    if all_vms_ids:
+        docs = await db.cameras.find(
+            {"camera_vms_id": {"$in": all_vms_ids}}, {"camera_vms_id": 1, "_id": 0}
+        ).to_list(1000)
+        existing_in_db = {d["camera_vms_id"] for d in docs}
+
     cameras = list(all_cameras.values())
-    
+    for cam in cameras:
+        cam["in_db"] = cam["camera_id"] in existing_in_db
+
     # Sort: enabled first, then by name
     cameras.sort(key=lambda c: (c.get('disabled', False), c.get('name', '')))
-    
+
     return {
         "vms_id": vms_id,
         "vms_name": server.get("name", ""),
@@ -186,9 +220,9 @@ async def fetch_vms_cameras(vms_id: str):
 
 
 @router.post("/{vms_id}/import-cameras")
-async def import_vms_cameras(vms_id: str, request: ImportCamerasRequest):
+async def import_vms_cameras(vms_id: str, request: ImportCamerasRequest, user: dict = Depends(require_auth)):
     """Import cameras from VMS and save to database"""
-    server = await db.vms_servers.find_one({"id": vms_id}, {"_id": 0})
+    server = await db.vms_servers.find_one({"id": vms_id, **get_tenant_filter(user)}, {"_id": 0})
     if not server:
         raise HTTPException(status_code=404, detail="VMS not found")
     
@@ -210,11 +244,13 @@ async def import_vms_cameras(vms_id: str, request: ImportCamerasRequest):
             skipped += 1
             continue
         
+        tenant_id = None if user.get("role") == "super_admin" else user.get("tenant_id")
         camera = Camera(
             store_id="",  # Will be assigned later
             camera_vms_id=cam_id,
             name=cam_data.get("name", f"Kamera {cam_id[:8]}"),
-            type=cam_data.get("type", "counter")
+            type=cam_data.get("type", "counter"),
+            tenant_id=tenant_id,
         )
         doc = camera.model_dump()
         doc['created_at'] = doc['created_at'].isoformat()
@@ -249,7 +285,7 @@ async def sync_vms_cameras(vms_id: str, store_id: str = None):
         stores = await db.stores.find({"vms_id": vms_id}, {"_id": 0}).to_list(100)
     
     if not stores:
-        return {"status": "warning", "message": "Bu VMS'e bağlı mağaza bulunamadı", "imported": 0}
+        return {"status": "warning", "message": "Bu VMS'e bağlı lokasyon bulunamadı", "imported": 0}
     
     total_imported = 0
     total_skipped = 0

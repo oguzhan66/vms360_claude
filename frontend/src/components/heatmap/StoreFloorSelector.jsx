@@ -19,14 +19,14 @@ export const StoreFloorSelector = ({
       <div className="p-3 border-b border-white/10">
         <h3 className="font-semibold text-sm flex items-center gap-2">
           <Store className="w-4 h-4 text-primary" />
-          Mağaza & Kat Seçimi
+          Lokasyon Lokasyon & Kat Seçimi Kat Seçimi
         </h3>
       </div>
       
       <div className="max-h-64 overflow-y-auto">
         {storesWithFloors.length === 0 ? (
           <div className="p-4 text-sm text-muted-foreground text-center">
-            Kat tanımlı mağaza bulunamadı
+            Kat tanımlı lokasyon bulunamadı
           </div>
         ) : (
           storesWithFloors.map(store => (

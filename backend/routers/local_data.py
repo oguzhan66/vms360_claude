@@ -39,9 +39,12 @@ async def get_latest_store_snapshots(store_ids: Optional[List[str]] = None, snap
     """Get the most recent snapshot for each store"""
     collection = db.counter_snapshots if snapshot_type == "counter" else db.queue_snapshots
     
+    if store_ids is not None and not store_ids:
+        return []
+
     # Get unique store IDs
     query = {}
-    if store_ids:
+    if store_ids is not None:
         query["store_id"] = {"$in": store_ids}
     
     # Aggregate to get latest snapshot per store
@@ -350,7 +353,7 @@ async def get_counter_report(
 
     # Build query
     query = {"date": {"$gte": start_date, "$lte": end_date}}
-    if filtered_ids:
+    if filtered_ids is not None:
         query["store_id"] = {"$in": filtered_ids}
 
     # Add hour filter if specified
@@ -423,28 +426,37 @@ async def get_counter_report(
                 "status": "normal"
             })
     else:
-        # Use daily_reports collection (from VMS report API)
-        dr_query = {"date": {"$gte": start_date, "$lte": end_date}}
-        if filtered_ids:
-            dr_query["store_id"] = {"$in": filtered_ids}
-        daily_docs = await db.daily_reports.find(dr_query, {"_id": 0}).to_list(10000)
+        # Use counter_snapshots: max total_in per (store, day), then sum across days
+        pipeline = [
+            {"$match": query},
+            {"$sort": {"date": -1, "hour": -1, "minute": -1}},
+            {"$group": {
+                "_id": {"store_id": "$store_id", "date": "$date"},
+                "total_in": {"$max": "$total_in"},
+                "total_out": {"$max": "$total_out"},
+                "store_name": {"$first": "$store_name"},
+                "store_id": {"$first": "$store_id"},
+            }},
+            {"$project": {"_id": 0}}
+        ]
+        daily_snaps = await db.counter_snapshots.aggregate(pipeline).to_list(10000)
+        logger.info(f"Counter historical: Found {len(daily_snaps)} daily snapshots for {start_date} to {end_date}")
         store_data = {}
-        for doc in daily_docs:
-            sid = doc.get("store_id")
+        for snap in daily_snaps:
+            sid = snap.get("store_id")
             if not sid or sid not in active_store_ids:
                 continue
             if sid not in store_data:
                 store_data[sid] = {
                     "store_id": sid,
-                    "store_name": active_store_names.get(sid, doc.get("store_name", "Bilinmiyor")),
+                    "store_name": active_store_names.get(sid, snap.get("store_name", "Bilinmiyor")),
                     "total_in": 0,
                     "total_out": 0,
                     "max_visitors": 0,
                     "days": 0
                 }
-            counter = doc.get("counter", {})
-            store_data[sid]["total_in"] += counter.get("total_in", 0)
-            store_data[sid]["total_out"] += counter.get("total_out", 0)
+            store_data[sid]["total_in"] += snap.get("total_in", 0)
+            store_data[sid]["total_out"] += snap.get("total_out", 0)
             store_data[sid]["days"] += 1
         stores = list(store_data.values())
         for s in stores:
@@ -521,7 +533,7 @@ async def get_queue_report(
 
     # Build query
     query = {"date": {"$gte": start_date, "$lte": end_date}}
-    if filtered_ids:
+    if filtered_ids is not None:
         query["store_id"] = {"$in": filtered_ids}
     
     # Add hour filter if specified
@@ -704,7 +716,7 @@ async def get_hourly_traffic_report(
     
     # Build query
     query = {"date": {"$gte": start_date, "$lte": end_date}}
-    if filtered_ids:
+    if filtered_ids is not None:
         query["store_id"] = {"$in": filtered_ids}
     
     logger.info(f"Hourly traffic query: {query}")
@@ -981,7 +993,7 @@ async def get_advanced_queue_analysis(
     
     # Build query
     query = {"date": {"$gte": start_date, "$lte": end_date}}
-    if filtered_ids:
+    if filtered_ids is not None:
         query["store_id"] = {"$in": filtered_ids}
     
     # Get queue snapshots for the date range
@@ -1167,7 +1179,7 @@ async def get_demographics_report(
     
     # Build query
     query = {"date": {"$gte": start_date, "$lte": end_date}}
-    if filtered_ids:
+    if filtered_ids is not None:
         query["store_id"] = {"$in": filtered_ids}
     
     # Get data: today from analytics_snapshots, historical from daily_reports
@@ -1190,28 +1202,34 @@ async def get_demographics_report(
                     age_dist[k] += v
             total += snap.get("total_events", 0)
     else:
-        dr_query = {"date": {"$gte": start_date, "$lte": end_date}}
-        if filtered_ids:
-            dr_query["store_id"] = {"$in": filtered_ids}
-        daily_docs = await db.daily_reports.find(dr_query, {"_id": 0}).to_list(1000)
-        logger.info(f"Demographics historical: Found {len(daily_docs)} daily reports")
-        seen_dates = set()
-        for doc in daily_docs:
-            date_key = doc.get("date")
-            if date_key in seen_dates:
-                continue
-            seen_dates.add(date_key)
-            fr = doc.get("fr_analytics", {})
-            gender_dist["Male"] += fr.get("male", 0)
-            gender_dist["Female"] += fr.get("female", 0)
-            gender_dist["Unknown"] += fr.get("unknown_gender", 0)
-            age_dist["0-17"] += fr.get("age_0_17", 0)
-            age_dist["18-24"] += fr.get("age_18_24", 0)
-            age_dist["25-34"] += fr.get("age_25_34", 0)
-            age_dist["35-44"] += fr.get("age_35_44", 0)
-            age_dist["45-54"] += fr.get("age_45_54", 0)
-            age_dist["55+"] += fr.get("age_55_64", 0) + fr.get("age_65_plus", 0)
-            total += fr.get("in", 0)
+        # Use analytics_snapshots: latest snapshot per (store, day) for cumulative daily value
+        an_query = {"date": {"$gte": start_date, "$lte": end_date}}
+        if filtered_ids is not None:
+            an_query["store_id"] = {"$in": filtered_ids}
+        pipeline = [
+            {"$match": an_query},
+            {"$sort": {"date": -1, "hour": -1, "minute": -1}},
+            {"$group": {
+                "_id": {"store_id": "$store_id", "date": "$date"},
+                "total_events": {"$max": "$total_events"},
+                "gender_distribution": {"$first": "$gender_distribution"},
+                "age_distribution": {"$first": "$age_distribution"},
+            }},
+        ]
+        daily_snaps = await db.analytics_snapshots.aggregate(pipeline).to_list(10000)
+        logger.info(f"Demographics historical: Found {len(daily_snaps)} daily analytics snapshots")
+        for snap in daily_snaps:
+            snap_gender = snap.get("gender_distribution", {})
+            snap_age = snap.get("age_distribution", {})
+            for k, v in snap_gender.items():
+                if k in gender_dist:
+                    gender_dist[k] += v
+                else:
+                    gender_dist["Unknown"] += v
+            for k, v in snap_age.items():
+                if k in age_dist:
+                    age_dist[k] += v
+            total += snap.get("total_events", 0)
     
     # Calculate percentages
     gender_percent = {k: round(v / total * 100, 1) if total > 0 else 0 for k, v in gender_dist.items()}

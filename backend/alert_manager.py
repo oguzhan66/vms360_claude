@@ -161,7 +161,7 @@ async def maybe_send_alert_email(alert: dict):
             <tr><td style="padding:8px;border:1px solid #ddd;font-weight:bold;">Başlangıç</td>
                 <td style="padding:8px;border:1px solid #ddd;">{alert['started_at'][:19].replace('T',' ')}</td></tr>
         </table>
-        <p style="color:#888;font-size:12px;margin-top:20px;">VMS360 Retail Panel tarafından gönderilmiştir.</p>
+        <p style="color:#888;font-size:12px;margin-top:20px;">VMS360 Stats & LPR tarafından gönderilmiştir.</p>
         </body></html>
         """
 

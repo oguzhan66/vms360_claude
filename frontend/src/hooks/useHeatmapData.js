@@ -20,7 +20,7 @@ export const useHeatmapData = () => {
       setStoresWithFloors(res.data || []);
     } catch (e) {
       console.error('Failed to load stores', e);
-      toast.error('Mağazalar yüklenemedi');
+      toast.error('Lokasyonlar yüklenemedi');
     }
   }, []);
 

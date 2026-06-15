@@ -87,7 +87,7 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         role: str = payload.get("role")
         if username is None:
             return None
-        return {"username": username, "role": role}
+        return {"username": username, "role": role, "tenant_id": payload.get("tenant_id")}
     except JWTError:
         return None
 
@@ -100,21 +100,55 @@ async def require_auth(credentials: HTTPAuthorizationCredentials = Depends(secur
         username: str = payload.get("sub")
         role: str = payload.get("role")
         token_type: str = payload.get("type", "access")
-        
+
         if username is None:
             raise HTTPException(status_code=401, detail="Geçersiz token")
         if token_type != "access":
             raise HTTPException(status_code=401, detail="Geçersiz token türü")
-        
-        return {"username": username, "role": role}
+
+        return {"username": username, "role": role, "tenant_id": payload.get("tenant_id")}
     except JWTError as e:
-        # Check if token expired
         if "expired" in str(e).lower():
             raise HTTPException(status_code=401, detail="Token süresi doldu")
         raise HTTPException(status_code=401, detail="Geçersiz token")
 
 
 async def require_admin(user: dict = Depends(require_auth)):
-    if user.get("role") != "admin":
+    if user.get("role") not in ("admin", "super_admin"):
         raise HTTPException(status_code=403, detail="Admin yetkisi gerekli")
     return user
+
+
+async def require_super_admin(user: dict = Depends(require_auth)):
+    if user.get("role") != "super_admin":
+        raise HTTPException(status_code=403, detail="Super admin yetkisi gerekli")
+    return user
+
+
+def get_tenant_filter(user: dict) -> dict:
+    """Return MongoDB tenant filter. super_admin sees all data."""
+    if user.get("role") == "super_admin":
+        return {}
+    tenant_id = user.get("tenant_id")
+    if not tenant_id:
+        return {"tenant_id": {"$in": [None, ""]}}
+    return {"tenant_id": tenant_id}
+
+
+def resolve_tenant_filter(user: dict, x_tenant_id: Optional[str] = None) -> dict:
+    """Like get_tenant_filter but super_admin can scope to a specific tenant via X-Tenant-ID header."""
+    if user.get("role") == "super_admin":
+        if x_tenant_id:
+            return {"tenant_id": x_tenant_id}
+        return {}
+    tenant_id = user.get("tenant_id")
+    if not tenant_id:
+        return {"tenant_id": {"$in": [None, ""]}}
+    return {"tenant_id": tenant_id}
+
+
+def resolve_tenant_id(user: dict, x_tenant_id: Optional[str] = None) -> Optional[str]:
+    """Return effective tenant_id for write operations. super_admin uses header value."""
+    if user.get("role") == "super_admin":
+        return x_tenant_id
+    return user.get("tenant_id")

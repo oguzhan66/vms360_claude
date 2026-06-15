@@ -19,34 +19,34 @@ db = client[os.environ['DB_NAME']]
 async def create_indexes():
     """Create MongoDB indexes for optimal query performance"""
     try:
-        # Counter snapshots - query by store and time
+        # Counter snapshots - query by tenant+store and time
         try:
             await db.counter_snapshots.create_index(
-                [("store_id", 1), ("timestamp", -1)],
+                [("tenant_id", 1), ("store_id", 1), ("timestamp", -1)],
                 background=True
             )
         except Exception as e:
             logger.warning(f"Index exists or error: {e}")
-        
+
         try:
             await db.counter_snapshots.create_index(
                 [("store_id", 1), ("date", 1), ("hour", 1), ("minute", 1)],
                 unique=True,
                 background=True,
-                sparse=True  # Allow null values
+                sparse=True
             )
         except Exception as e:
             logger.warning(f"Index exists or error: {e}")
-        
-        # Queue snapshots - query by store and time
+
+        # Queue snapshots
         try:
             await db.queue_snapshots.create_index(
-                [("store_id", 1), ("timestamp", -1)],
+                [("tenant_id", 1), ("store_id", 1), ("timestamp", -1)],
                 background=True
             )
         except Exception as e:
             logger.warning(f"Index exists or error: {e}")
-        
+
         try:
             await db.queue_snapshots.create_index(
                 [("store_id", 1), ("date", 1), ("hour", 1), ("minute", 1)],
@@ -56,16 +56,16 @@ async def create_indexes():
             )
         except Exception as e:
             logger.warning(f"Index exists or error: {e}")
-        
-        # Analytics snapshots - query by store and date
+
+        # Analytics snapshots
         try:
             await db.analytics_snapshots.create_index(
-                [("store_id", 1), ("timestamp", -1)],
+                [("tenant_id", 1), ("store_id", 1), ("timestamp", -1)],
                 background=True
             )
         except Exception as e:
             logger.warning(f"Index exists or error: {e}")
-        
+
         try:
             await db.analytics_snapshots.create_index(
                 [("store_id", 1), ("date", 1), ("hour", 1), ("minute", 1)],
@@ -75,28 +75,26 @@ async def create_indexes():
             )
         except Exception as e:
             logger.warning(f"Index exists or error: {e}")
-        
-        # Daily summaries - query by store and date
+
+        # Daily summaries
         try:
             await db.daily_summaries.create_index(
-                [("store_id", 1), ("date", -1)],
-                unique=True,
+                [("tenant_id", 1), ("store_id", 1), ("date", -1)],
                 background=True
             )
         except Exception as e:
             logger.warning(f"Index exists or error: {e}")
-        
-        # Hourly aggregates - query by store, date and hour
+
+        # Hourly aggregates
         try:
             await db.hourly_aggregates.create_index(
-                [("store_id", 1), ("date", 1), ("hour", 1)],
-                unique=True,
+                [("tenant_id", 1), ("store_id", 1), ("date", 1), ("hour", 1)],
                 background=True
             )
         except Exception as e:
             logger.warning(f"Index exists or error: {e}")
-        
-        # Store health - for monitoring data freshness
+
+        # Store health
         try:
             await db.store_health.create_index(
                 [("store_id", 1)],
@@ -105,18 +103,47 @@ async def create_indexes():
             )
         except Exception as e:
             logger.warning(f"Index exists or error: {e}")
-        
-        # Stores - basic indexes
+
+        # Stores
         try:
             await db.stores.create_index([("id", 1)], unique=True, background=True)
         except Exception as e:
             logger.warning(f"Index exists or error: {e}")
-        
+
         try:
-            await db.stores.create_index([("district_id", 1)], background=True)
+            await db.stores.create_index([("tenant_id", 1), ("district_id", 1)], background=True)
         except Exception as e:
             logger.warning(f"Index exists or error: {e}")
-        
+
+        # Tenants
+        try:
+            await db.tenants.create_index([("id", 1)], unique=True, background=True)
+        except Exception as e:
+            logger.warning(f"Index exists or error: {e}")
+
+        try:
+            await db.tenants.create_index([("slug", 1)], unique=True, background=True)
+        except Exception as e:
+            logger.warning(f"Index exists or error: {e}")
+
+        # Users - tenant-scoped username lookups
+        try:
+            await db.users.create_index([("tenant_id", 1), ("username", 1)], background=True)
+        except Exception as e:
+            logger.warning(f"Index exists or error: {e}")
+
+        # Cameras
+        try:
+            await db.cameras.create_index([("tenant_id", 1), ("store_id", 1)], background=True)
+        except Exception as e:
+            logger.warning(f"Index exists or error: {e}")
+
+        # VMS servers
+        try:
+            await db.vms_servers.create_index([("tenant_id", 1)], background=True)
+        except Exception as e:
+            logger.warning(f"Index exists or error: {e}")
+
         logger.info("MongoDB indexes created/verified successfully")
         return True
     except Exception as e:

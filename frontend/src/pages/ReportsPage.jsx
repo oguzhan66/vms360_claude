@@ -1,179 +1,196 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Layout } from '../components/Layout';
-import { FilterBar } from '../components/FilterBar';
-import { reportApi } from '../services/api';
+import { vmsEventsApi } from '../services/api';
 import { Button } from '../components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
-import { Download, FileSpreadsheet, FileText, FileJson, Users, ListOrdered, BarChart3, Calendar, RefreshCw, FileType } from 'lucide-react';
+import { ShieldAlert, Cctv, Car, Download, RefreshCw, Calendar, FileText, Filter, ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
-import { 
-  PieChart as RechartsPie, Pie, Cell, ResponsiveContainer, 
-  BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid
+import {
+  PieChart, Pie, Cell, ResponsiveContainer,
+  BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
 } from 'recharts';
 
 const REPORT_TYPES = [
-  { id: 'counter', label: 'Kişi Sayma', icon: Users, description: 'Giriş/çıkış ve doluluk verileri' },
-  { id: 'queue', label: 'Kuyruk Analizi', icon: ListOrdered, description: 'Kuyruk uzunlukları ve yoğunluk' },
-  { id: 'analytics', label: 'Yaş/Cinsiyet', icon: BarChart3, description: 'Demografik analiz verileri' },
+  { id: 'alarm',   label: 'Alarm Raporu',   icon: ShieldAlert, description: 'Seviye ve tür bazlı alarm istatistikleri' },
+  { id: 'camera',  label: 'Kamera Raporu',  icon: Cctv,        description: 'Kamera bazlı alarm dağılımı' },
+  { id: 'lpr',     label: 'LPR / Plaka',    icon: ShieldAlert, description: 'Kapı bazlı araç giriş/çıkış istatistikleri' },
 ];
 
 const DATE_RANGES = [
-  { id: '1d', label: '1 Gün' },
-  { id: '1w', label: '1 Hafta' },
-  { id: '1m', label: '1 Ay' },
-  { id: '1y', label: '1 Yıl' },
-  { id: 'custom', label: 'Manuel Seçim' },
+  { id: 'today',   label: 'Bugün' },
+  { id: '1d',      label: 'Son 24 Saat' },
+  { id: '7d',      label: 'Son 7 Gün' },
+  { id: '30d',     label: 'Son 30 Gün' },
+  { id: 'custom',  label: 'Manuel Seçim' },
 ];
 
-const COLORS = ['#10B981', '#F59E0B', '#EF4444', '#3B82F6', '#8B5CF6', '#EC4899'];
+const LEVEL_COLORS = { Bildirim: '#3B82F6', Alarm: '#F59E0B', Hata: '#EF4444' };
+const BAR_COLORS   = ['#3B82F6','#10B981','#F59E0B','#EF4444','#8B5CF6','#EC4899','#14B8A6','#F97316'];
+const levelMap     = { '0': 'Bildirim', '1': 'Alarm', '2': 'Hata' };
+
+const exportCSV = (rows, filename) => {
+  if (!rows.length) return;
+  const headers = Object.keys(rows[0]);
+  const lines = [
+    headers.join(','),
+    ...rows.map(r => headers.map(h => `"${(r[h] ?? '').toString().replace(/"/g, '""')}"`).join(',')),
+  ];
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+};
 
 const ReportsPage = () => {
-  const [selectedType, setSelectedType] = useState('counter');
-  const [dateRange, setDateRange] = useState('1d');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
-  const [filters, setFilters] = useState({});
-  const [report, setReport] = useState(null);
-  const [dailyReport, setDailyReport] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [exporting, setExporting] = useState(false);
-  const [viewMode, setViewMode] = useState('summary'); // 'summary' | 'daily'
+  const [selectedType,     setSelectedType]     = useState('alarm');
+  const [dateRange,        setDateRange]        = useState('today');
+  const [dateFrom,         setDateFrom]         = useState('');
+  const [dateTo,           setDateTo]           = useState('');
+  const [levelFilter,      setLevelFilter]      = useState('0,1,2');
+  const [data,             setData]             = useState(null);
+  const [lprCamData,       setLprCamData]       = useState([]);
+  const [loading,          setLoading]          = useState(false);
+  const [availableTypes,   setAvailableTypes]   = useState([]);
+  const [selectedTypes,    setSelectedTypes]    = useState([]); // boş = tümü
+  const [typeDropdownOpen, setTypeDropdownOpen] = useState(false);
 
-  const loadReport = async () => {
+  // Mevcut olay tiplerini yükle
+  useEffect(() => {
+    vmsEventsApi.getTypes().then(r => {
+      setAvailableTypes(r.data.types || []);
+    }).catch(() => {});
+  }, []);
+
+  const toggleType = (type) => {
+    setSelectedTypes(prev =>
+      prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
+    );
+  };
+
+  const buildParams = useCallback(() => {
+    const p = { levels: levelFilter };
+    if (dateRange === 'today') {
+      const d = new Date(); d.setHours(0, 0, 0, 0);
+      p.time_from = d.toISOString();
+      p.time_to   = new Date().toISOString();
+    } else if (dateRange === '1d') {
+      const d = new Date(); d.setMinutes(d.getMinutes() - 1440);
+      p.time_from = d.toISOString();
+      p.time_to   = new Date().toISOString();
+    } else if (dateRange === '7d') {
+      const d = new Date(); d.setDate(d.getDate() - 7);
+      p.time_from = d.toISOString();
+      p.time_to   = new Date().toISOString();
+    } else if (dateRange === '30d') {
+      const d = new Date(); d.setDate(d.getDate() - 30);
+      p.time_from = d.toISOString();
+      p.time_to   = new Date().toISOString();
+    } else if (dateRange === 'custom') {
+      if (dateFrom) p.time_from = new Date(dateFrom).toISOString();
+      if (dateTo)   p.time_to   = new Date(dateTo).toISOString();
+    }
+    if (selectedTypes.length > 0) {
+      p.types = selectedTypes.join(',');
+    }
+    return p;
+  }, [dateRange, dateFrom, dateTo, levelFilter, selectedTypes]);
+
+  const loadReport = useCallback(async () => {
     setLoading(true);
     try {
-      const params = {
-        ...filters,
-        date_range: dateRange,
-        ...(dateRange === 'custom' && dateFrom && { date_from: dateFrom }),
-        ...(dateRange === 'custom' && dateTo && { date_to: dateTo }),
-      };
-
-      let res;
-      if (selectedType === 'counter') {
-        res = await reportApi.getCounter(params);
-      } else if (selectedType === 'queue') {
-        res = await reportApi.getQueue(params);
-      } else {
-        res = await reportApi.getAnalytics(params);
-      }
-      setReport(res.data);
-
-      // Günlük detay için ek veri (1d dışında)
-      if (dateRange !== '1d' && selectedType !== 'analytics') {
-        try {
-          const dailyParams = { ...params, group_by: 'day' };
-          const dailyRes = selectedType === 'counter'
-            ? await reportApi.getCounter({ ...dailyParams, date_range: dateRange })
-            : await reportApi.getQueue({ ...dailyParams, date_range: dateRange });
-          setDailyReport(dailyRes.data);
-        } catch {}
-      } else {
-        setDailyReport(null);
-      }
+      const p = buildParams();
+      const [alarmRes, lprCamRes] = await Promise.allSettled([
+        vmsEventsApi.getAlarms(p),
+        vmsEventsApi.getLPRByCamera({ time_from: p.time_from, time_to: p.time_to }),
+      ]);
+      if (alarmRes.status === 'fulfilled') setData(alarmRes.value.data);
+      if (lprCamRes.status === 'fulfilled') setLprCamData(lprCamRes.value.data.cameras || []);
     } catch (e) {
-      console.error('Failed to load report', e);
+      console.error(e);
       toast.error('Rapor yüklenemedi');
     } finally {
       setLoading(false);
     }
-  };
+  }, [buildParams]);
 
-  useEffect(() => {
-    loadReport();
-  }, [selectedType, dateRange, dateFrom, dateTo, filters]);
+  useEffect(() => { loadReport(); }, [loadReport]);
 
-  const handleExport = async (format) => {
-    setExporting(true);
-    try {
-      const params = {
-        ...filters,
-        date_range: dateRange,
-        ...(dateRange === 'custom' && dateFrom && { date_from: dateFrom }),
-        ...(dateRange === 'custom' && dateTo && { date_to: dateTo }),
-      };
+  // ── Derived stats ─────────────────────────────────────────────────────────
+  const events    = data?.events || [];
+  const stats     = data?.stats  || {};
 
-      if (format === 'pdf') {
-        const res = await reportApi.exportPdf(selectedType, params);
-        const url = window.URL.createObjectURL(new Blob([res.data]));
-        const link = document.createElement('a');
-        link.href = url;
-        link.setAttribute('download', `rapor_${selectedType}_${new Date().toISOString().slice(0,10)}.pdf`);
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        toast.success('PDF raporu indirildi');
-        return;
-      }
+  const levelPie = Object.entries(data?.counts || {})
+    .filter(([, v]) => v > 0)
+    .map(([k, v]) => ({ name: k, value: v, color: LEVEL_COLORS[k] || '#6B7280' }));
 
-      const res = await reportApi.export(selectedType, format, params);
-      
-      if (format === 'json') {
-        const blob = new Blob([JSON.stringify(res.data, null, 2)], { type: 'application/json' });
-        const url = window.URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.setAttribute('download', `rapor_${selectedType}_${new Date().toISOString().slice(0,10)}.json`);
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-      } else {
-        const url = window.URL.createObjectURL(new Blob([res.data]));
-        const link = document.createElement('a');
-        link.href = url;
-        const ext = format === 'excel' ? 'xlsx' : 'csv';
-        link.setAttribute('download', `rapor_${selectedType}_${new Date().toISOString().slice(0,10)}.${ext}`);
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-      }
-      
-      toast.success(`${format.toUpperCase()} raporu indirildi`);
-    } catch (e) {
-      console.error('Export failed', e);
-      toast.error('Dışa aktarma başarısız');
-    } finally {
-      setExporting(false);
-    }
-  };
+  const hourlyArr = Array.from({ length: 24 }, (_, h) => ({
+    hour: `${String(h).padStart(2, '0')}:00`,
+    count: stats.by_hour?.[String(h)] || 0,
+  }));
 
-  const getDateRangeLabel = () => {
-    const range = DATE_RANGES.find(r => r.id === dateRange);
-    if (dateRange === 'custom' && dateFrom && dateTo) {
-      return `${dateFrom} - ${dateTo}`;
-    }
-    return range?.label || '';
-  };
-
-  // Chart data for different report types
-  const getStatusData = () => {
-    if (!report?.summary) return [];
-    const s = report.summary;
-    return [
-      { name: 'Normal', value: s.stores_normal || 0, color: '#10B981' },
-      { name: 'Uyarı', value: s.stores_warning || 0, color: '#F59E0B' },
-      { name: 'Kritik', value: s.stores_critical || 0, color: '#EF4444' },
-    ].filter(d => d.value > 0);
-  };
-
-  const getGenderData = () => {
-    if (!report?.gender_distribution) return [];
-    const g = report.gender_distribution;
-    return [
-      { name: 'Erkek', value: g.Male || 0, color: '#3B82F6' },
-      { name: 'Kadın', value: g.Female || 0, color: '#EC4899' },
-    ].filter(d => d.value > 0);
-  };
-
-  const getAgeData = () => {
-    if (!report?.age_distribution) return [];
-    return Object.entries(report.age_distribution).map(([key, value], idx) => ({
-      name: key,
-      value,
-      fill: COLORS[idx % COLORS.length]
+  const camArr = Object.entries(stats.by_camera || {})
+    .slice(0, 10)
+    .map(([name, count], i) => ({
+      name: name.length > 18 ? name.slice(0, 16) + '…' : name,
+      count,
+      fill: BAR_COLORS[i % BAR_COLORS.length],
     }));
+
+  const typeArr = Object.entries(stats.by_type || {})
+    .slice(0, 10)
+    .map(([name, count], i) => ({
+      name: name.length > 22 ? name.slice(0, 20) + '…' : name,
+      count,
+      fill: BAR_COLORS[i % BAR_COLORS.length],
+    }));
+
+  // Camera-level breakdown for camera report
+  const cameraRows = Object.entries(stats.by_camera || {})
+    .sort((a, b) => b[1] - a[1])
+    .map(([name, total]) => {
+      const camEvents = events.filter(e => (e.camera_name || e.camera_id) === name);
+      const byLvl = { Bildirim: 0, Alarm: 0, Hata: 0 };
+      camEvents.forEach(e => { byLvl[levelMap[String(e.level)] || 'Bildirim']++; });
+      return { name, total, ...byLvl };
+    });
+
+  // ── Exports ───────────────────────────────────────────────────────────────
+  const handleExportCSV = () => {
+    const date = new Date().toISOString().slice(0, 10);
+    if (selectedType === 'alarm') {
+      const rows = events.map(e => ({
+        Zaman:    e.time?.replace('T', ' ').slice(0, 19) || '',
+        Kamera:   e.camera_name || e.camera_id || '',
+        Seviye:   levelMap[String(e.level)] || e.level || '',
+        Tip:      e.type || '',
+        Açıklama: e.short_desc || '',
+        Plaka:    e.plate || '',
+        VMS:      e.vms_name || '',
+      }));
+      exportCSV(rows, `alarm_raporu_${date}.csv`);
+    } else if (selectedType === 'camera') {
+      exportCSV(cameraRows, `kamera_raporu_${date}.csv`);
+    } else if (selectedType === 'lpr') {
+      const rows = lprCamData.map(c => ({
+        Kamera:     c.camera_name || c.camera_id || '',
+        Toplam:     c.total,
+        Giriş:      c.entry,
+        Çıkış:      c.exit,
+        Bilinmiyor: c.unknown,
+      }));
+      exportCSV(rows, `lpr_kamera_raporu_${date}.csv`);
+    }
+    toast.success('CSV indirildi');
+  };
+
+  const dateLabel = DATE_RANGES.find(r => r.id === dateRange)?.label || '';
+
+  const levelBadge = (level) => {
+    const lbl = levelMap[String(level)] || level;
+    const cls = lbl === 'Hata' ? 'text-red-400 bg-red-500/10' : lbl === 'Alarm' ? 'text-amber-400 bg-amber-500/10' : 'text-blue-400 bg-blue-500/10';
+    return <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${cls}`}>{lbl}</span>;
   };
 
   return (
@@ -182,627 +199,410 @@ const ReportsPage = () => {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-bold">Raporlar</h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              Detaylı analiz raporları ve veri dışa aktarma
-            </p>
+            <p className="text-sm text-muted-foreground mt-1">VMS alarm istatistik raporları ve veri dışa aktarma</p>
           </div>
         </div>
       </div>
 
       <div className="page-content">
-        {/* Report Type Selection */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-          {REPORT_TYPES.map((type) => (
+        {/* Report Type Tabs */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+          {REPORT_TYPES.map(rt => (
             <button
-              key={type.id}
-              onClick={() => setSelectedType(type.id)}
+              key={rt.id}
+              onClick={() => setSelectedType(rt.id)}
               className={`p-4 text-left transition-all ${
-                selectedType === type.id 
-                  ? 'store-card border-primary border-2' 
-                  : 'store-card hover:border-primary/50'
+                selectedType === rt.id ? 'store-card border-primary border-2' : 'store-card hover:border-primary/50'
               }`}
-              data-testid={`report-type-${type.id}`}
             >
               <div className="flex items-center gap-3">
-                <div className={`w-10 h-10 flex items-center justify-center ${
-                  selectedType === type.id ? 'bg-primary/20' : 'bg-secondary'
-                }`}>
-                  <type.icon className={`w-5 h-5 ${selectedType === type.id ? 'text-primary' : 'text-muted-foreground'}`} />
+                <div className={`w-10 h-10 flex items-center justify-center ${selectedType === rt.id ? 'bg-primary/20' : 'bg-secondary'}`}>
+                  <rt.icon className={`w-5 h-5 ${selectedType === rt.id ? 'text-primary' : 'text-muted-foreground'}`} />
                 </div>
                 <div>
-                  <div className={`font-semibold ${selectedType === type.id ? 'text-primary' : ''}`}>
-                    {type.label}
-                  </div>
-                  <div className="text-xs text-muted-foreground">{type.description}</div>
+                  <div className={`font-semibold ${selectedType === rt.id ? 'text-primary' : ''}`}>{rt.label}</div>
+                  <div className="text-xs text-muted-foreground">{rt.description}</div>
                 </div>
               </div>
             </button>
           ))}
         </div>
 
-        {/* Date Range & Filters */}
-        <div className="filter-bar mb-6">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        {/* Filter Bar */}
+        <div className="filter-bar mb-6 flex-wrap gap-3">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground shrink-0">
             <Calendar className="w-4 h-4" />
             <span>Tarih Aralığı</span>
           </div>
 
-          <Select value={dateRange} onValueChange={setDateRange}>
-            <SelectTrigger className="w-36 bg-secondary/50 border-border text-foreground" data-testid="date-range-select">
-              <SelectValue placeholder="Tarih seçin" />
-            </SelectTrigger>
-            <SelectContent>
-              {DATE_RANGES.map((range) => (
-                <SelectItem key={range.id} value={range.id}>{range.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <select
+            value={dateRange}
+            onChange={e => setDateRange(e.target.value)}
+            className="text-sm rounded border border-border bg-background text-foreground px-3 py-1.5 focus:outline-none"
+          >
+            {DATE_RANGES.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
+          </select>
 
           {dateRange === 'custom' && (
             <>
               <div className="flex items-center gap-2">
-                <Label className="text-sm text-muted-foreground">Başlangıç:</Label>
-                <Input
-                  type="datetime-local"
-                  value={dateFrom}
-                  onChange={(e) => setDateFrom(e.target.value)}
-                  className="w-48 bg-secondary/50 border-border"
-                  data-testid="date-from-input"
-                />
+                <Label className="text-sm text-muted-foreground shrink-0">Başlangıç:</Label>
+                <Input type="datetime-local" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+                  className="w-44 bg-secondary/50 border-border h-9" />
               </div>
               <div className="flex items-center gap-2">
-                <Label className="text-sm text-muted-foreground">Bitiş:</Label>
-                <Input
-                  type="datetime-local"
-                  value={dateTo}
-                  onChange={(e) => setDateTo(e.target.value)}
-                  className="w-48 bg-secondary/50 border-border"
-                  data-testid="date-to-input"
-                />
+                <Label className="text-sm text-muted-foreground shrink-0">Bitiş:</Label>
+                <Input type="datetime-local" value={dateTo} onChange={e => setDateTo(e.target.value)}
+                  className="w-44 bg-secondary/50 border-border h-9" />
               </div>
             </>
+          )}
+
+          <select
+            value={levelFilter}
+            onChange={e => setLevelFilter(e.target.value)}
+            className="text-sm rounded border border-border bg-background text-foreground px-3 py-1.5 focus:outline-none"
+          >
+            <option value="0,1,2">Tüm Seviyeler</option>
+            <option value="0">Yalnızca Bildirim</option>
+            <option value="1">Yalnızca Alarm</option>
+            <option value="2">Yalnızca Hata</option>
+            <option value="1,2">Alarm + Hata</option>
+          </select>
+
+          {/* Olay Tipi Filtresi */}
+          {availableTypes.length > 0 && (
+            <div className="relative">
+              <button
+                onClick={() => setTypeDropdownOpen(o => !o)}
+                className="flex items-center gap-2 text-sm rounded border border-border bg-background text-foreground px-3 py-1.5 focus:outline-none hover:border-primary/50 transition-colors"
+              >
+                <Filter className="w-3.5 h-3.5" />
+                {selectedTypes.length === 0
+                  ? 'Tüm Olay Tipleri'
+                  : `${selectedTypes.length} tip seçili`}
+                <ChevronDown className="w-3.5 h-3.5 opacity-60" />
+              </button>
+              {typeDropdownOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setTypeDropdownOpen(false)} />
+                  <div className="absolute top-full left-0 mt-1 z-50 bg-card border border-border rounded-lg shadow-lg py-1 min-w-52">
+                  <button
+                    className="w-full text-left text-xs px-3 py-2 hover:bg-secondary/50 text-muted-foreground"
+                    onClick={() => { setSelectedTypes([]); setTypeDropdownOpen(false); }}
+                  >
+                    Tümünü Seç (Filtre Yok)
+                  </button>
+                  <div className="h-px bg-border mx-2 my-1" />
+                  {availableTypes.map(t => (
+                    <label key={t.type} className="flex items-center gap-2.5 px-3 py-2 hover:bg-secondary/50 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={selectedTypes.includes(t.type)}
+                        onChange={() => toggleType(t.type)}
+                        className="accent-primary"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium truncate">{t.label}</div>
+                        <div className="text-xs text-muted-foreground">{t.count.toLocaleString()} kayıt</div>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+                </>
+              )}
+            </div>
           )}
 
           <div className="flex-1" />
 
-          <Button 
-            variant="outline" 
-            size="sm" 
-            onClick={loadReport}
-            disabled={loading}
-            className="border-border text-foreground"
-            data-testid="refresh-report-btn"
-          >
+          <Button variant="outline" size="sm" onClick={loadReport} disabled={loading} className="border-border text-foreground">
             <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
             Yenile
           </Button>
-        </div>
 
-        {/* Location Filters */}
-        <FilterBar 
-          onFilterChange={setFilters}
-          showRefresh={false}
-          showStoreFilter={true}
-        />
-
-        {/* Görünüm Modu Toggle */}
-        {dateRange !== '1d' && selectedType !== 'analytics' && (
-          <div className="flex items-center gap-2 mb-4">
-            <span className="text-sm text-muted-foreground">Görünüm:</span>
-            <div className="flex rounded border border-border overflow-hidden">
-              <button
-                onClick={() => setViewMode('summary')}
-                className={`px-3 py-1.5 text-sm ${viewMode === 'summary' ? 'bg-primary text-primary-foreground' : 'bg-secondary/30 text-muted-foreground hover:bg-secondary/50'}`}
-              >
-                Özet (Mağaza Bazlı)
-              </button>
-              <button
-                onClick={() => setViewMode('daily')}
-                className={`px-3 py-1.5 text-sm border-l border-border ${viewMode === 'daily' ? 'bg-primary text-primary-foreground' : 'bg-secondary/30 text-muted-foreground hover:bg-secondary/50'}`}
-              >
-                Günlük Detay
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Export Buttons */}
-        <div className="flex items-center gap-3 mb-6">
-          <span className="text-sm text-muted-foreground">Dışa Aktar:</span>
-          <Button 
-            variant="outline" 
-            size="sm"
-            onClick={() => handleExport('excel')}
-            disabled={exporting || loading}
-            className="border-border text-foreground"
-            data-testid="export-excel"
-          >
-            <FileSpreadsheet className="w-4 h-4 mr-2 text-green-500" />
-            Excel (.xlsx)
-          </Button>
-          <Button 
-            variant="outline" 
-            size="sm"
-            onClick={() => handleExport('csv')}
-            disabled={exporting || loading}
-            className="border-border text-foreground"
-            data-testid="export-csv"
-          >
-            <FileText className="w-4 h-4 mr-2 text-blue-500" />
-            CSV
-          </Button>
-          <Button 
-            variant="outline" 
-            size="sm"
-            onClick={() => handleExport('json')}
-            disabled={exporting || loading}
-            className="border-border text-foreground"
-            data-testid="export-json"
-          >
-            <FileJson className="w-4 h-4 mr-2 text-amber-500" />
-            JSON
-          </Button>
-          <Button 
-            variant="outline" 
-            size="sm"
-            onClick={() => handleExport('pdf')}
-            disabled={exporting || loading}
-            className="border-border text-foreground"
-            data-testid="export-pdf"
-          >
-            <FileType className="w-4 h-4 mr-2 text-red-500" />
-            PDF
+          <Button variant="outline" size="sm" onClick={handleExportCSV} disabled={loading || !data} className="border-border text-foreground">
+            <Download className="w-4 h-4 mr-2 text-green-500" />
+            CSV İndir
           </Button>
         </div>
 
         {loading ? (
-          <div className="text-center py-16 text-muted-foreground">
+          <div className="text-center py-20 text-muted-foreground">
             <RefreshCw className="w-8 h-8 mx-auto mb-4 animate-spin" />
-            <p>Rapor yükleniyor...</p>
+            <p>Rapor yükleniyor…</p>
           </div>
-        ) : report ? (
+        ) : !data ? (
+          <div className="text-center py-20 text-muted-foreground">
+            <FileText className="w-12 h-12 mx-auto mb-4 opacity-40" />
+            <p>Veri yüklenemedi</p>
+          </div>
+        ) : (
           <>
-            {/* Report Summary */}
-            <div className="chart-container mb-6">
-              <div className="chart-title flex items-center gap-2">
-                {REPORT_TYPES.find(t => t.id === selectedType)?.icon && (
-                  <span>{(() => { const Icon = REPORT_TYPES.find(t => t.id === selectedType)?.icon; return Icon ? <Icon className="w-5 h-5 text-primary" /> : null; })()}</span>
-                )}
-                {REPORT_TYPES.find(t => t.id === selectedType)?.label} Raporu - {getDateRangeLabel()}
+            {/* ── KPI Cards ─────────────────────────────────────────────────── */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+              <div className="bg-secondary/30 border border-border rounded-lg p-4">
+                <div className="text-xs text-muted-foreground mb-1">Toplam Alarm ({dateLabel})</div>
+                <div className="text-3xl font-mono font-bold">{data.total}</div>
               </div>
-              
-              {/* Counter Report Summary */}
-              {selectedType === 'counter' && report.summary && (
-                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mt-4">
-                  <div className="p-3 bg-secondary/30 border border-border">
-                    <div className="text-xs text-muted-foreground">Toplam Mağaza</div>
-                    <div className="text-2xl font-mono font-bold">{report.summary.total_stores}</div>
-                  </div>
-                  <div className="p-3 bg-secondary/30 border border-border">
-                    <div className="text-xs text-muted-foreground">Toplam Giriş</div>
-                    <div className="text-2xl font-mono font-bold text-emerald-500">{report.summary.total_in?.toLocaleString()}</div>
-                  </div>
-                  <div className="p-3 bg-secondary/30 border border-border">
-                    <div className="text-xs text-muted-foreground">Toplam Çıkış</div>
-                    <div className="text-2xl font-mono font-bold text-amber-500">{report.summary.total_out?.toLocaleString()}</div>
-                  </div>
-                  <div className="p-3 bg-secondary/30 border border-border">
-                    <div className="text-xs text-muted-foreground">Mevcut Ziyaretçi</div>
-                    <div className="text-2xl font-mono font-bold">{report.summary.current_visitors?.toLocaleString()}</div>
-                  </div>
-                  <div className="p-3 bg-secondary/30 border border-border">
-                    <div className="text-xs text-muted-foreground">Ort. Doluluk</div>
-                    <div className="text-2xl font-mono font-bold">%{report.summary.avg_occupancy}</div>
-                  </div>
-                  <div className="p-3 bg-secondary/30 border border-border">
-                    <div className="text-xs text-muted-foreground">Kritik Mağaza</div>
-                    <div className="text-2xl font-mono font-bold text-red-500">{report.summary.stores_critical}</div>
-                  </div>
-                </div>
-              )}
-
-              {/* Queue Report Summary */}
-              {selectedType === 'queue' && report.summary && (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
-                  <div className="p-3 bg-secondary/30 border border-border">
-                    <div className="text-xs text-muted-foreground">Toplam Mağaza</div>
-                    <div className="text-2xl font-mono font-bold">{report.summary.total_stores}</div>
-                  </div>
-                  <div className="p-3 bg-secondary/30 border border-border">
-                    <div className="text-xs text-muted-foreground">Toplam Kuyruk</div>
-                    <div className="text-2xl font-mono font-bold text-amber-500">{report.summary.total_queue_length}</div>
-                  </div>
-                  <div className="p-3 bg-secondary/30 border border-border">
-                    <div className="text-xs text-muted-foreground">Ort. Kuyruk/Mağaza</div>
-                    <div className="text-2xl font-mono font-bold">{report.summary.avg_queue_per_store}</div>
-                  </div>
-                  <div className="p-3 bg-secondary/30 border border-border">
-                    <div className="text-xs text-muted-foreground">Kritik Mağaza</div>
-                    <div className="text-2xl font-mono font-bold text-red-500">{report.summary.stores_critical}</div>
-                  </div>
-                </div>
-              )}
-
-              {/* Analytics Report Summary */}
-              {selectedType === 'analytics' && report.summary && (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
-                  <div className="p-3 bg-secondary/30 border border-border">
-                    <div className="text-xs text-muted-foreground">Toplam Tespit</div>
-                    <div className="text-2xl font-mono font-bold">{report.summary.total_detections}</div>
-                  </div>
-                  <div className="p-3 bg-secondary/30 border border-border">
-                    <div className="text-xs text-muted-foreground">Erkek</div>
-                    <div className="text-2xl font-mono font-bold text-blue-500">{report.summary.male_count} (%{report.summary.male_percent})</div>
-                  </div>
-                  <div className="p-3 bg-secondary/30 border border-border">
-                    <div className="text-xs text-muted-foreground">Kadın</div>
-                    <div className="text-2xl font-mono font-bold text-pink-500">{report.summary.female_count} (%{report.summary.female_percent})</div>
-                  </div>
-                </div>
-              )}
+              <div className="bg-blue-500/5 border border-border rounded-lg p-4">
+                <div className="text-xs text-muted-foreground mb-1">Bildirim</div>
+                <div className="text-3xl font-mono font-bold text-blue-600 dark:text-blue-400">{data.counts?.Bildirim ?? 0}</div>
+              </div>
+              <div className="bg-amber-500/5 border border-border rounded-lg p-4">
+                <div className="text-xs text-muted-foreground mb-1">Alarm</div>
+                <div className="text-3xl font-mono font-bold text-amber-600 dark:text-amber-400">{data.counts?.Alarm ?? 0}</div>
+              </div>
+              <div className="bg-red-500/5 border border-border rounded-lg p-4">
+                <div className="text-xs text-muted-foreground mb-1">Hata</div>
+                <div className="text-3xl font-mono font-bold text-red-600 dark:text-red-400">{data.counts?.Hata ?? 0}</div>
+              </div>
             </div>
 
-            {/* Charts */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-              {/* Status Distribution Chart (Counter & Queue) */}
-              {(selectedType === 'counter' || selectedType === 'queue') && (
-                <div className="chart-container">
-                  <div className="chart-title">Mağaza Durum Dağılımı</div>
-                  <div className="h-64">
-                    {getStatusData().length > 0 ? (
-                      <ResponsiveContainer width="100%" height="100%">
-                        <RechartsPie>
-                          <Pie
-                            data={getStatusData()}
-                            cx="50%"
-                            cy="50%"
-                            innerRadius={50}
-                            outerRadius={80}
-                            paddingAngle={2}
-                            dataKey="value"
-                          >
-                            {getStatusData().map((entry, index) => (
-                              <Cell key={`cell-${index}`} fill={entry.color} />
-                            ))}
-                          </Pie>
-                          <Tooltip 
-                            contentStyle={{ 
-                              background: 'hsl(var(--card))', 
-                              border: '1px solid hsl(var(--border))',
-                              color: 'hsl(var(--foreground))'
-                            }}
-                          />
-                        </RechartsPie>
-                      </ResponsiveContainer>
-                    ) : (
-                      <div className="h-full flex items-center justify-center text-muted-foreground">Veri yok</div>
-                    )}
+            {/* ── ALARM RAPORU GÖRÜNÜMÜ ─────────────────────────────────────── */}
+            {selectedType === 'alarm' && (
+              <>
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+                  {/* Level Pie */}
+                  <div className="chart-container">
+                    <div className="chart-title">Seviye Dağılımı</div>
+                    <div className="h-48">
+                      {levelPie.length > 0 ? (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Pie data={levelPie} cx="50%" cy="50%" innerRadius={45} outerRadius={72} paddingAngle={2} dataKey="value">
+                              {levelPie.map((e, i) => <Cell key={i} fill={e.color} />)}
+                            </Pie>
+                            <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '4px' }} />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      ) : (
+                        <div className="h-full flex items-center justify-center text-muted-foreground text-sm">Veri yok</div>
+                      )}
+                    </div>
+                    <div className="flex justify-center gap-3 mt-2">
+                      {levelPie.map((e, i) => (
+                        <div key={i} className="flex items-center gap-1.5 text-xs">
+                          <div className="w-3 h-3 rounded-sm" style={{ background: e.color }} />
+                          <span className="text-muted-foreground">{e.name}: {e.value}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                  <div className="flex justify-center gap-4 mt-2">
-                    {getStatusData().map((item, idx) => (
-                      <div key={idx} className="flex items-center gap-2 text-sm">
-                        <div className="w-3 h-3" style={{ background: item.color }} />
-                        <span>{item.name}: {item.value}</span>
-                      </div>
-                    ))}
+
+                  {/* Hourly */}
+                  <div className="chart-container col-span-2">
+                    <div className="chart-title">Saatlik Dağılım</div>
+                    <div className="h-52">
+                      {hourlyArr.some(d => d.count > 0) ? (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={hourlyArr}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                            <XAxis dataKey="hour" tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 9 }} interval={3} />
+                            <YAxis tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} />
+                            <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '4px' }} formatter={v => [v, 'Alarm']} />
+                            <Bar dataKey="count" fill="#F59E0B" radius={[2, 2, 0, 0]} />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      ) : (
+                        <div className="h-full flex items-center justify-center text-muted-foreground text-sm">Veri yok</div>
+                      )}
+                    </div>
                   </div>
                 </div>
-              )}
 
-              {/* Gender Distribution (Analytics) */}
-              {selectedType === 'analytics' && (
-                <div className="chart-container">
-                  <div className="chart-title">Cinsiyet Dağılımı</div>
-                  <div className="h-64">
-                    {getGenderData().length > 0 ? (
+                {/* Alarm Type Bar */}
+                {typeArr.length > 0 && (
+                  <div className="chart-container mb-6">
+                    <div className="chart-title">Alarm Tipi Dağılımı</div>
+                    <div className="h-52">
                       <ResponsiveContainer width="100%" height="100%">
-                        <RechartsPie>
-                          <Pie
-                            data={getGenderData()}
-                            cx="50%"
-                            cy="50%"
-                            innerRadius={50}
-                            outerRadius={80}
-                            paddingAngle={2}
-                            dataKey="value"
-                          >
-                            {getGenderData().map((entry, index) => (
-                              <Cell key={`cell-${index}`} fill={entry.color} />
-                            ))}
-                          </Pie>
-                          <Tooltip 
-                            contentStyle={{ 
-                              background: 'hsl(var(--card))', 
-                              border: '1px solid hsl(var(--border))',
-                              color: 'hsl(var(--foreground))'
-                            }}
-                          />
-                        </RechartsPie>
+                        <BarChart data={typeArr} layout="vertical" margin={{ left: 8, right: 16 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" horizontal={false} />
+                          <XAxis type="number" tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} />
+                          <YAxis dataKey="name" type="category" width={130} tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} />
+                          <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '4px' }} formatter={v => [v, 'Alarm']} />
+                          <Bar dataKey="count" radius={[0, 4, 4, 0]}>
+                            {typeArr.map((e, i) => <Cell key={i} fill={e.fill} />)}
+                          </Bar>
+                        </BarChart>
                       </ResponsiveContainer>
-                    ) : (
-                      <div className="h-full flex items-center justify-center text-muted-foreground">Veri yok</div>
-                    )}
+                    </div>
                   </div>
-                  <div className="flex justify-center gap-4 mt-2">
-                    {getGenderData().map((item, idx) => (
-                      <div key={idx} className="flex items-center gap-2 text-sm">
-                        <div className="w-3 h-3" style={{ background: item.color }} />
-                        <span>{item.name}: {item.value}</span>
-                      </div>
-                    ))}
+                )}
+
+                {/* Event Table */}
+                <div className="chart-container">
+                  <div className="chart-title">Alarm Listesi ({events.length} kayıt)</div>
+                  <div className="overflow-x-auto mt-2">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-xs text-muted-foreground border-b border-border">
+                          <th className="text-left py-2 pr-4">Zaman</th>
+                          <th className="text-left py-2 pr-4">Kamera</th>
+                          <th className="text-left py-2 pr-4">Seviye</th>
+                          <th className="text-left py-2 pr-4">Tip</th>
+                          <th className="text-left py-2">Açıklama</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {events.slice(0, 200).map((ev, i) => (
+                          <tr key={i} className="border-b border-border/50 hover:bg-secondary/20">
+                            <td className="py-2 pr-4 font-mono text-xs text-muted-foreground whitespace-nowrap">
+                              {ev.time?.replace('T', ' ').slice(0, 19) || '—'}
+                            </td>
+                            <td className="py-2 pr-4 text-xs">{ev.camera_name || ev.camera_id || '—'}</td>
+                            <td className="py-2 pr-4">{levelBadge(ev.level)}</td>
+                            <td className="py-2 pr-4 text-xs text-muted-foreground">{ev.type || '—'}</td>
+                            <td className="py-2 text-xs text-muted-foreground truncate max-w-xs">{ev.short_desc || '—'}</td>
+                          </tr>
+                        ))}
+                        {events.length === 0 && (
+                          <tr><td colSpan={5} className="text-center py-8 text-muted-foreground">Bu aralıkta alarm kaydı yok</td></tr>
+                        )}
+                        {events.length > 200 && (
+                          <tr><td colSpan={5} className="text-center py-2 text-xs text-muted-foreground">… ve {events.length - 200} kayıt daha. Tümü için CSV indirin.</td></tr>
+                        )}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
-              )}
+              </>
+            )}
 
-              {/* Age Distribution (Analytics) */}
-              {selectedType === 'analytics' && (
-                <div className="chart-container">
-                  <div className="chart-title">Yaş Dağılımı</div>
+            {/* ── KAMERA RAPORU GÖRÜNÜMÜ ────────────────────────────────────── */}
+            {selectedType === 'camera' && (
+              <>
+                {/* Camera Bar */}
+                <div className="chart-container mb-6">
+                  <div className="chart-title">En Çok Alarm Gelen Kameralar</div>
                   <div className="h-64">
-                    {getAgeData().some(d => d.value > 0) ? (
+                    {camArr.length > 0 ? (
                       <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={getAgeData()} layout="vertical">
-                          <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                          <XAxis type="number" stroke="hsl(var(--muted-foreground))" />
-                          <YAxis 
-                            dataKey="name" 
-                            type="category" 
-                            stroke="hsl(var(--muted-foreground))"
-                            width={60}
-                          />
-                          <Tooltip 
-                            contentStyle={{ 
-                              background: 'hsl(var(--card))', 
-                              border: '1px solid hsl(var(--border))',
-                              color: 'hsl(var(--foreground))'
-                            }}
-                          />
-                          <Bar dataKey="value" radius={[0, 4, 4, 0]}>
-                            {getAgeData().map((entry, index) => (
-                              <Cell key={`cell-${index}`} fill={entry.fill} />
-                            ))}
+                        <BarChart data={camArr} layout="vertical" margin={{ left: 8, right: 16 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" horizontal={false} />
+                          <XAxis type="number" tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} />
+                          <YAxis dataKey="name" type="category" width={120} tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} />
+                          <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '4px' }} formatter={v => [v, 'Alarm']} />
+                          <Bar dataKey="count" radius={[0, 4, 4, 0]}>
+                            {camArr.map((e, i) => <Cell key={i} fill={e.fill} />)}
                           </Bar>
                         </BarChart>
                       </ResponsiveContainer>
                     ) : (
-                      <div className="h-full flex items-center justify-center text-muted-foreground">Veri yok</div>
+                      <div className="h-full flex items-center justify-center text-muted-foreground text-sm">Veri yok</div>
                     )}
                   </div>
                 </div>
-              )}
 
-              {/* Store Bar Chart (Counter) */}
-              {selectedType === 'counter' && report.stores?.length > 0 && (
+                {/* Camera Detail Table */}
                 <div className="chart-container">
-                  <div className="chart-title">En Yoğun Mağazalar</div>
-                  <div className="h-64">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart 
-                        data={report.stores.slice(0, 8).map(s => ({
-                          name: s.store_name?.substring(0, 12) || '',
-                          visitors: s.current_visitors || 0
-                        }))} 
-                        layout="vertical"
-                      >
-                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                        <XAxis type="number" stroke="hsl(var(--muted-foreground))" />
-                        <YAxis 
-                          dataKey="name" 
-                          type="category" 
-                          stroke="hsl(var(--muted-foreground))"
-                          width={100}
-                        />
-                        <Tooltip 
-                          contentStyle={{ 
-                            background: 'hsl(var(--card))', 
-                            border: '1px solid hsl(var(--border))',
-                            color: 'hsl(var(--foreground))'
-                          }}
-                        />
-                        <Bar dataKey="visitors" fill="#3B82F6" radius={[0, 4, 4, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
+                  <div className="chart-title">Kamera Bazlı Detay ({cameraRows.length} kamera)</div>
+                  <div className="overflow-x-auto mt-2">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-xs text-muted-foreground border-b border-border">
+                          <th className="text-left py-2 pr-4">#</th>
+                          <th className="text-left py-2 pr-4">Kamera</th>
+                          <th className="text-right py-2 pr-4">Toplam</th>
+                          <th className="text-right py-2 pr-4">Bildirim</th>
+                          <th className="text-right py-2 pr-4">Alarm</th>
+                          <th className="text-right py-2">Hata</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {cameraRows.map((row, i) => (
+                          <tr key={i} className="border-b border-border/50 hover:bg-secondary/20">
+                            <td className="py-2 pr-4 text-xs text-muted-foreground">{i + 1}</td>
+                            <td className="py-2 pr-4 font-medium text-xs">{row.name}</td>
+                            <td className="py-2 pr-4 text-right font-mono font-bold">{row.total}</td>
+                            <td className="py-2 pr-4 text-right font-mono text-blue-400">{row.Bildirim}</td>
+                            <td className="py-2 pr-4 text-right font-mono text-amber-400">{row.Alarm}</td>
+                            <td className="py-2 text-right font-mono text-red-400">{row.Hata}</td>
+                          </tr>
+                        ))}
+                        {cameraRows.length === 0 && (
+                          <tr><td colSpan={6} className="text-center py-8 text-muted-foreground">Bu aralıkta kamera verisi yok</td></tr>
+                        )}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
-              )}
-            </div>
+              </>
+            )}
 
-            {/* Detail Table */}
-            <div className="chart-container">
-              <div className="chart-title">Detay Tablosu</div>
-              <div className="overflow-x-auto">
-                <table className="data-table">
-                  <thead>
-                    {selectedType === 'counter' && (
-                      <tr>
-                        <th>Mağaza</th>
-                        <th>Bölge</th>
-                        <th>İl</th>
-                        <th>İlçe</th>
-                        <th>Giriş</th>
-                        <th>Çıkış</th>
-                        <th>Mevcut</th>
-                        <th>Kapasite</th>
-                        <th>Doluluk</th>
-                        <th>Durum</th>
-                      </tr>
-                    )}
-                    {selectedType === 'queue' && viewMode === 'summary' && (
-                      <tr>
-                        <th>Mağaza</th>
-                        <th>Bölge</th>
-                        <th>İl</th>
-                        <th>İlçe</th>
-                        <th title="Kuyruk > 0 olduğu anlardaki ortalama">Ort. Kuyruk (aktif)</th>
-                        <th>Maks. Kuyruk</th>
-                        <th title="Kaç kez eşik aşıldı ve toplam süre">Eşik Aşım</th>
-                        <th>En Yoğun Saat</th>
-                        <th>Eşik</th>
-                        <th>Durum</th>
-                      </tr>
-                    )}
-                    {selectedType === 'analytics' && (
-                      <tr>
-                        <th>Zaman</th>
-                        <th>Kamera</th>
-                        <th>Yaş</th>
-                        <th>Cinsiyet</th>
-                        <th>Tanınma</th>
-                      </tr>
-                    )}
-                  </thead>
-                  <tbody>
-                    {selectedType === 'counter' && report.stores?.map((store) => (
-                      <tr key={store.store_id}>
-                        <td className="font-medium">{store.store_name}</td>
-                        <td>{store.region_name}</td>
-                        <td>{store.city_name}</td>
-                        <td>{store.district_name}</td>
-                        <td className="font-mono text-emerald-500">{store.total_in}</td>
-                        <td className="font-mono text-amber-500">{store.total_out}</td>
-                        <td className="font-mono font-bold">{store.current_visitors}</td>
-                        <td className="font-mono">{store.capacity}</td>
-                        <td className="font-mono">%{store.occupancy_percent}</td>
-                        <td>
-                          <span className={`inline-flex px-2 py-0.5 text-xs ${
-                            store.status === 'critical' ? 'bg-red-500/20 text-red-500' :
-                            store.status === 'warning' ? 'bg-amber-500/20 text-amber-500' :
-                            'bg-emerald-500/20 text-emerald-500'
-                          }`}>
-                            {store.status === 'critical' ? 'Kritik' : store.status === 'warning' ? 'Uyarı' : 'Normal'}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                    {selectedType === 'queue' && viewMode === 'summary' && report.stores?.map((store) => (
-                      <tr key={store.store_id}>
-                        <td className="font-medium">{store.store_name}</td>
-                        <td>{store.region_name}</td>
-                        <td>{store.city_name}</td>
-                        <td>{store.district_name}</td>
-                        <td className="font-mono font-bold">{store.avg_queue_length ?? store.total_queue_length}</td>
-                        <td className="font-mono">{store.max_queue_length ?? '—'}</td>
-                        <td className="font-mono text-xs">{store.exceed_note || (store.exceed_event_count ? `${store.exceed_event_count} olay / ${store.exceed_duration}` : '—')}</td>
-                        <td className="font-mono text-xs">{store.peak_hour || '—'}</td>
-                        <td className="font-mono">{store.queue_threshold}</td>
-                        <td>
-                          <span className={`inline-flex px-2 py-0.5 text-xs ${
-                            store.status === 'critical' ? 'bg-red-500/20 text-red-500' :
-                            store.status === 'warning' ? 'bg-amber-500/20 text-amber-500' :
-                            'bg-emerald-500/20 text-emerald-500'
-                          }`}>
-                            {store.status === 'critical' ? 'Kritik' : store.status === 'warning' ? 'Uyarı' : 'Normal'}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                    {((selectedType === 'counter' && !report.stores?.length) || 
-                      (selectedType === 'queue' && !report.stores?.length)) && (
-                      <tr>
-                        <td colSpan={10} className="text-center py-8 text-muted-foreground">
-                          Veri bulunamadı
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          {/* Günlük Detay Görünümü */}
-          {viewMode === 'daily' && report && selectedType !== 'analytics' && (
-            <DailyDetailView report={report} selectedType={selectedType} />
-          )}
+            {/* ── LPR RAPORU GÖRÜNÜMÜ ───────────────────────────────────────── */}
+            {selectedType === 'lpr' && (
+              <>
+                {/* KPI */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                  <div className="bg-secondary/30 border border-border rounded-lg p-4">
+                    <div className="text-xs text-muted-foreground mb-1">Toplam Geçiş</div>
+                    <div className="text-3xl font-mono font-bold">{lprCamData.reduce((s, c) => s + c.total, 0)}</div>
+                  </div>
+                  <div className="bg-emerald-500/5 border border-border rounded-lg p-4">
+                    <div className="text-xs text-muted-foreground mb-1">Giriş (BottomUp)</div>
+                    <div className="text-3xl font-mono font-bold text-emerald-600 dark:text-emerald-400">{lprCamData.reduce((s, c) => s + c.entry, 0)}</div>
+                  </div>
+                  <div className="bg-red-500/5 border border-border rounded-lg p-4">
+                    <div className="text-xs text-muted-foreground mb-1">Çıkış (TopDown / Exit)</div>
+                    <div className="text-3xl font-mono font-bold text-red-600 dark:text-red-400">{lprCamData.reduce((s, c) => s + c.exit, 0)}</div>
+                  </div>
+                  <div className="bg-secondary/30 border border-border rounded-lg p-4">
+                    <div className="text-xs text-muted-foreground mb-1">Bilinmiyor</div>
+                    <div className="text-3xl font-mono font-bold text-muted-foreground">{lprCamData.reduce((s, c) => s + c.unknown, 0)}</div>
+                  </div>
+                </div>
+
+                {/* Kamera / Kapı tablosu */}
+                <div className="chart-container">
+                  <div className="chart-title flex items-center gap-2">
+                    <Car className="w-4 h-4 text-emerald-500" />
+                    Kapı / Kamera Bazlı Geçiş Detayı
+                  </div>
+                  <div className="overflow-x-auto mt-2">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-xs text-muted-foreground border-b border-border">
+                          <th className="text-left py-2 pr-4">#</th>
+                          <th className="text-left py-2 pr-4">Kamera / Kapı</th>
+                          <th className="text-right py-2 pr-4">Toplam</th>
+                          <th className="text-right py-2 pr-4 text-emerald-600 dark:text-emerald-400">Giriş</th>
+                          <th className="text-right py-2 pr-4 text-red-600 dark:text-red-400">Çıkış</th>
+                          <th className="text-right py-2 text-muted-foreground">Bilinmiyor</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {lprCamData.length === 0 ? (
+                          <tr><td colSpan={6} className="text-center py-8 text-muted-foreground">Bu aralıkta LPR verisi yok</td></tr>
+                        ) : lprCamData.map((cam, i) => {
+                          const maxTotal = lprCamData[0]?.total || 1;
+                          return (
+                            <tr key={i} className="border-b border-border/40 hover:bg-secondary/20">
+                              <td className="py-2 pr-4 text-muted-foreground text-xs">{i + 1}</td>
+                              <td className="py-2 pr-4">
+                                <div>{cam.camera_name || cam.camera_id || '—'}</div>
+                                <div className="w-full h-1 bg-border rounded-full mt-1 overflow-hidden">
+                                  <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${(cam.total / maxTotal) * 100}%` }} />
+                                </div>
+                              </td>
+                              <td className="py-2 pr-4 text-right font-mono font-bold">{cam.total}</td>
+                              <td className="py-2 pr-4 text-right font-mono text-emerald-600 dark:text-emerald-400">{cam.entry}</td>
+                              <td className="py-2 pr-4 text-right font-mono text-red-600 dark:text-red-400">{cam.exit}</td>
+                              <td className="py-2 text-right font-mono text-muted-foreground">{cam.unknown}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
+            )}
           </>
-        ) : (
-          <div className="text-center py-16 text-muted-foreground">
-            <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
-            <p>Rapor yüklenemedi</p>
-          </div>
         )}
       </div>
     </Layout>
-  );
-};
-
-// Günlük Detay Görünümü Component
-const DailyDetailView = ({ report, selectedType }) => {
-  const stores = report?.stores || [];
-  if (!stores.length) return null;
-
-  // Mağaza başına günlük veriyi hesapla (snapshot'lardan değil mevcut rapor verisini gruplayarak göster)
-  // Şu an snapshot bazlı detay için backend endpoint gerekir; burada mevcut raporu gösteriyoruz
-  const isCounter = selectedType === 'counter';
-
-  return (
-    <div className="mt-6 space-y-6">
-      <h3 className="text-base font-semibold">Günlük Detay</h3>
-      {stores.map(store => (
-        <div key={store.store_id} className="border border-border rounded-lg overflow-hidden">
-          {/* Mağaza başlığı */}
-          <div className="bg-secondary/30 px-4 py-2 flex items-center justify-between">
-            <div>
-              <span className="font-semibold">{store.store_name}</span>
-              <span className="text-xs text-muted-foreground ml-2">{store.city_name}, {store.district_name}</span>
-            </div>
-            <span className={`px-2 py-0.5 text-xs rounded ${
-              store.status === 'critical' ? 'bg-red-500/20 text-red-400' :
-              store.status === 'warning' ? 'bg-amber-500/20 text-amber-400' :
-              'bg-emerald-500/20 text-emerald-400'}`}>
-              {store.status === 'critical' ? 'Kritik' : store.status === 'warning' ? 'Uyarı' : 'Normal'}
-            </span>
-          </div>
-
-          {/* Özet satırı */}
-          <div className="p-3 grid grid-cols-2 md:grid-cols-4 gap-3 border-b border-border">
-            {isCounter ? (
-              <>
-                <div className="text-center"><div className="text-lg font-mono font-bold text-emerald-400">{store.total_in?.toLocaleString()}</div><div className="text-xs text-muted-foreground">Toplam Giriş</div></div>
-                <div className="text-center"><div className="text-lg font-mono font-bold text-amber-400">{store.total_out?.toLocaleString()}</div><div className="text-xs text-muted-foreground">Toplam Çıkış</div></div>
-                <div className="text-center"><div className="text-lg font-mono font-bold">{store.current_visitors}</div><div className="text-xs text-muted-foreground">Mevcut</div></div>
-                <div className="text-center"><div className="text-lg font-mono font-bold">{store.occupancy_percent}%</div><div className="text-xs text-muted-foreground">Doluluk</div></div>
-              </>
-            ) : (
-              <>
-                <div className="text-center"><div className="text-lg font-mono font-bold">{store.avg_queue_length}</div><div className="text-xs text-muted-foreground">Ort. Kuyruk</div></div>
-                <div className="text-center"><div className="text-lg font-mono font-bold text-red-400">{store.max_queue_length}</div><div className="text-xs text-muted-foreground">Maks. Kuyruk</div></div>
-                <div className="text-center"><div className="text-lg font-mono font-bold text-amber-400">{store.exceed_event_count || 0}</div><div className="text-xs text-muted-foreground">Eşik Aşım Olayı</div></div>
-                <div className="text-center"><div className="text-lg font-mono font-bold">{store.exceed_duration || '—'}</div><div className="text-xs text-muted-foreground">Eşik Üzeri Süre</div></div>
-              </>
-            )}
-          </div>
-
-          {/* Ek bilgiler */}
-          <div className="px-3 py-2 text-xs text-muted-foreground flex flex-wrap gap-4">
-            {!isCounter && store.peak_hour && <span>En Yoğun: <strong className="text-foreground">{store.peak_hour}</strong></span>}
-            {!isCounter && <span>Eşik: <strong className="text-foreground">{store.queue_threshold}</strong></span>}
-            {isCounter && <span>Kapasite: <strong className="text-foreground">{store.capacity}</strong></span>}
-            <span>Bölge: <strong className="text-foreground">{store.region_name || '—'}</strong></span>
-          </div>
-        </div>
-      ))}
-
-      {/* Genel Toplam */}
-      <div className="border border-primary/30 bg-primary/5 rounded-lg p-4">
-        <h4 className="font-semibold mb-3 text-primary">Genel Toplam</h4>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {isCounter ? (
-            <>
-              <div className="text-center"><div className="text-xl font-mono font-bold text-emerald-400">{stores.reduce((s,r) => s + (r.total_in||0), 0).toLocaleString()}</div><div className="text-xs text-muted-foreground">Toplam Giriş</div></div>
-              <div className="text-center"><div className="text-xl font-mono font-bold text-amber-400">{stores.reduce((s,r) => s + (r.total_out||0), 0).toLocaleString()}</div><div className="text-xs text-muted-foreground">Toplam Çıkış</div></div>
-              <div className="text-center"><div className="text-xl font-mono font-bold">{stores.reduce((s,r) => s + (r.current_visitors||0), 0)}</div><div className="text-xs text-muted-foreground">Toplam Mevcut</div></div>
-              <div className="text-center"><div className="text-xl font-mono font-bold">{stores.length} mağaza</div><div className="text-xs text-muted-foreground">Toplam Mağaza</div></div>
-            </>
-          ) : (
-            <>
-              <div className="text-center"><div className="text-xl font-mono font-bold">{Math.round(stores.reduce((s,r) => s + (r.avg_queue_length||0), 0) / stores.length * 10)/10}</div><div className="text-xs text-muted-foreground">Ortalama Kuyruk</div></div>
-              <div className="text-center"><div className="text-xl font-mono font-bold text-red-400">{Math.max(...stores.map(r => r.max_queue_length||0))}</div><div className="text-xs text-muted-foreground">En Uzun Kuyruk</div></div>
-              <div className="text-center"><div className="text-xl font-mono font-bold text-amber-400">{stores.reduce((s,r) => s + (r.exceed_event_count||0), 0)}</div><div className="text-xs text-muted-foreground">Toplam Eşik Aşım</div></div>
-              <div className="text-center"><div className="text-xl font-mono font-bold">{stores.length} mağaza</div><div className="text-xs text-muted-foreground">Toplam Mağaza</div></div>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
   );
 };
 
